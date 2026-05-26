@@ -186,6 +186,12 @@ function findInstallationByImei(imei) {
   );
 }
 
+function findInstallationByVehicle(vehicleNo) {
+  const q = vehicleNo.trim().toLowerCase();
+  if (!q) return null;
+  return loadInstallations().find((inst) => inst.vehicleNo.toLowerCase() === q);
+}
+
 function historyList(items) {
   if (!items.length) return '<span class="muted">—</span>';
   return items
@@ -206,6 +212,10 @@ function workLabels(record) {
   if (record.wiringConnection) parts.push("Wiring connection");
   if (record.simChange) parts.push(`SIM change → ${record.newSimNo}`);
   if (record.deviceChange) parts.push(`Device change → ${record.newImei}`);
+  if (record.sensorOutForRepair) parts.push("Sensor out for repair in office");
+  if (record.sensorChanged) parts.push("Sensor changed");
+  if (record.deviceOutForRepair) parts.push("Device out for repair in office");
+  if (record.otherWorkText) parts.push(`Other → ${record.otherWorkText}`);
   return parts.join(", ") || "—";
 }
 
@@ -608,13 +618,18 @@ function renderRepairForm() {
         <form id="repairForm">
           <div class="form-grid">
             <div class="field">
-              <label for="repairImei">IMEI No <span class="required">*</span></label>
-              <input type="text" id="repairImei" required placeholder="Enter IMEI to lookup" autocomplete="off" />
-              <p class="field-hint" id="imeiHint">Enter IMEI from installation database</p>
+              <label for="repairImei">IMEI No</label>
+              <input type="text" id="repairImei" placeholder="Enter IMEI to lookup" autocomplete="off" />
+              <p class="field-hint" id="imeiHint">Enter IMEI or select vehicle from database</p>
             </div>
             <div class="field">
-              <label for="repairVehicle">Vehicle No</label>
-              <input type="text" id="repairVehicle" readonly placeholder="Auto-filled from database" />
+              <label for="repairVehicle">Vehicle No / Name</label>
+              <input type="text" id="repairVehicle" list="installedVehicles" placeholder="Search installed vehicle" autocomplete="off" />
+              <datalist id="installedVehicles">
+                ${loadInstallations()
+                  .map((inst) => `<option value="${escapeHtml(inst.vehicleNo)}">${escapeHtml(getCurrentImei(inst))}</option>`)
+                  .join("")}
+              </datalist>
             </div>
           </div>
 
@@ -640,6 +655,26 @@ function renderRepairForm() {
               <label for="newImeiNo">New IMEI No <span class="required">*</span></label>
               <input type="text" id="newImeiNo" placeholder="Enter new IMEI number" autocomplete="off" />
             </div>
+            <label class="check-option">
+              <input type="checkbox" id="workSensorOut" />
+              <span>Sensor out for repair in office</span>
+            </label>
+            <label class="check-option">
+              <input type="checkbox" id="workSensorChanged" />
+              <span>Sensor changed</span>
+            </label>
+            <label class="check-option">
+              <input type="checkbox" id="workDeviceOut" />
+              <span>Device out for repair in office</span>
+            </label>
+            <label class="check-option">
+              <input type="checkbox" id="workOther" />
+              <span>Other</span>
+            </label>
+            <div class="conditional-field hidden" id="otherWorkBox">
+              <label for="otherWorkText">Other repair detail <span class="required">*</span></label>
+              <input type="text" id="otherWorkText" placeholder="Enter repair detail" autocomplete="off" />
+            </div>
           </div>
 
           <div class="form-actions">
@@ -658,16 +693,28 @@ function renderRepairForm() {
   const hint = document.getElementById("imeiHint");
   const simCheck = document.getElementById("workSimChange");
   const deviceCheck = document.getElementById("workDeviceChange");
+  const otherCheck = document.getElementById("workOther");
   const newSimBox = document.getElementById("newSimBox");
   const newImeiBox = document.getElementById("newImeiBox");
+  const otherWorkBox = document.getElementById("otherWorkBox");
 
-  imeiInput.addEventListener("input", () => {
-    const inst = findInstallationByImei(imeiInput.value);
+  const applyInstallation = (inst) => {
     if (inst) {
+      imeiInput.value = getCurrentImei(inst);
       vehicleInput.value = inst.vehicleNo;
       hint.textContent = `Found: ${inst.gpsModel} | Current SIM: ${getCurrentSim(inst)}`;
       hint.classList.add("hint-ok");
       imeiInput.classList.remove("invalid");
+      vehicleInput.classList.remove("invalid");
+    } else {
+      hint.classList.remove("hint-ok");
+    }
+  };
+
+  imeiInput.addEventListener("input", () => {
+    const inst = findInstallationByImei(imeiInput.value);
+    if (inst) {
+      applyInstallation(inst);
     } else if (imeiInput.value.trim()) {
       vehicleInput.value = "";
       hint.textContent = "IMEI not found in installation database";
@@ -675,6 +722,21 @@ function renderRepairForm() {
     } else {
       vehicleInput.value = "";
       hint.textContent = "Enter IMEI from installation database";
+      hint.classList.remove("hint-ok");
+    }
+  });
+
+  vehicleInput.addEventListener("input", () => {
+    const inst = findInstallationByVehicle(vehicleInput.value);
+    if (inst) {
+      applyInstallation(inst);
+    } else if (vehicleInput.value.trim()) {
+      imeiInput.value = "";
+      hint.textContent = "Vehicle not found in installation database";
+      hint.classList.remove("hint-ok");
+    } else {
+      imeiInput.value = "";
+      hint.textContent = "Enter IMEI or select vehicle from database";
       hint.classList.remove("hint-ok");
     }
   });
@@ -689,24 +751,43 @@ function renderRepairForm() {
     if (!deviceCheck.checked) document.getElementById("newImeiNo").value = "";
   });
 
+  otherCheck.addEventListener("change", () => {
+    otherWorkBox.classList.toggle("hidden", !otherCheck.checked);
+    if (!otherCheck.checked) document.getElementById("otherWorkText").value = "";
+  });
+
   document.getElementById("repairForm").addEventListener("submit", async (e) => {
     e.preventDefault();
 
     const imei = imeiInput.value.trim();
-    const inst = findInstallationByImei(imei);
+    const inst = findInstallationByImei(imei) || findInstallationByVehicle(vehicleInput.value);
     const wiring = document.getElementById("workWiring").checked;
     const simChange = simCheck.checked;
     const deviceChange = deviceCheck.checked;
+    const sensorOutForRepair = document.getElementById("workSensorOut").checked;
+    const sensorChanged = document.getElementById("workSensorChanged").checked;
+    const deviceOutForRepair = document.getElementById("workDeviceOut").checked;
+    const otherWork = otherCheck.checked;
     const newSim = document.getElementById("newSimNo").value.trim();
     const newImei = document.getElementById("newImeiNo").value.trim();
+    const otherWorkText = document.getElementById("otherWorkText").value.trim();
 
     if (!inst) {
       imeiInput.classList.add("invalid");
-      showToast("IMEI not found in installation database.", true);
+      vehicleInput.classList.add("invalid");
+      showToast("IMEI or vehicle not found in installation database.", true);
       return;
     }
 
-    if (!wiring && !simChange && !deviceChange) {
+    if (
+      !wiring &&
+      !simChange &&
+      !deviceChange &&
+      !sensorOutForRepair &&
+      !sensorChanged &&
+      !deviceOutForRepair &&
+      !otherWork
+    ) {
       showToast("Select at least one work type.", true);
       return;
     }
@@ -720,6 +801,12 @@ function renderRepairForm() {
     if (deviceChange && !newImei) {
       document.getElementById("newImeiNo").classList.add("invalid");
       showToast("Enter new IMEI for device change.", true);
+      return;
+    }
+
+    if (otherWork && !otherWorkText) {
+      document.getElementById("otherWorkText").classList.add("invalid");
+      showToast("Enter details for Other repair work.", true);
       return;
     }
 
@@ -767,6 +854,10 @@ function renderRepairForm() {
       newSimNo: simChange ? newSim : null,
       deviceChange,
       newImei: deviceChange ? newImei : null,
+      sensorOutForRepair,
+      sensorChanged,
+      deviceOutForRepair,
+      otherWorkText: otherWork ? otherWorkText : null,
       oldSimNo,
       oldImei,
       simDeactivationPending,
@@ -808,11 +899,15 @@ function downloadRepairSample() {
       "new_sim_no",
       "device_change",
       "new_imei",
+      "sensor_out_for_repair",
+      "sensor_changed",
+      "device_out_for_repair",
+      "other_work_text",
       "created_at",
       "created_by",
     ],
-    ["867530012345678", "yes", "yes", "9876500000", "no", "", "2026-05-25 11:00", "akash"],
-    ["867530012345678", "no", "no", "", "yes", "867530012345679", "2026-05-25 12:00", "akash"],
+    ["867530012345678", "yes", "yes", "9876500000", "no", "", "no", "no", "no", "", "2026-05-25 11:00", "akash"],
+    ["867530012345678", "no", "no", "", "yes", "867530012345679", "yes", "no", "yes", "Bracket broken", "2026-05-25 12:00", "akash"],
   ]);
 }
 
@@ -904,6 +999,10 @@ async function importRepairs(file) {
     const wiringConnection = normalizeBool(row.wiring_connection || row.wiring);
     const simChange = normalizeBool(row.sim_change);
     const deviceChange = normalizeBool(row.device_change);
+    const sensorOutForRepair = normalizeBool(row.sensor_out_for_repair);
+    const sensorChanged = normalizeBool(row.sensor_changed);
+    const deviceOutForRepair = normalizeBool(row.device_out_for_repair);
+    const otherWorkText = row.other_work_text || row.other || "";
     const newSimNo = row.new_sim_no || row.new_sim || "";
     const newImei = row.new_imei || "";
 
@@ -912,7 +1011,15 @@ async function importRepairs(file) {
       continue;
     }
 
-    if (!wiringConnection && !simChange && !deviceChange) {
+    if (
+      !wiringConnection &&
+      !simChange &&
+      !deviceChange &&
+      !sensorOutForRepair &&
+      !sensorChanged &&
+      !deviceOutForRepair &&
+      !otherWorkText
+    ) {
       errors.push(`Row ${rowNo}: select at least one repair work type`);
       continue;
     }
@@ -981,6 +1088,10 @@ async function importRepairs(file) {
       newSimNo: simChange ? newSimNo : null,
       deviceChange,
       newImei: deviceChange ? newImei : null,
+      sensorOutForRepair,
+      sensorChanged,
+      deviceOutForRepair,
+      otherWorkText: otherWorkText || null,
       oldSimNo,
       oldImei,
       simDeactivationPending,
