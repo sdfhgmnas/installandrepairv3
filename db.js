@@ -349,6 +349,7 @@ function rowToStockItem(row) {
     costPerUnit: row.cost_per_unit != null ? Number(row.cost_per_unit) : null,
     lowStockThreshold: row.low_stock_threshold != null ? Number(row.low_stock_threshold) : null,
     notes: row.notes || null,
+    metadata: row.metadata && typeof row.metadata === "object" ? row.metadata : {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -364,6 +365,7 @@ function stockItemToRow(item) {
     cost_per_unit: num(item.costPerUnit),
     low_stock_threshold: num(item.lowStockThreshold),
     notes: item.notes || null,
+    metadata: item.metadata && typeof item.metadata === "object" ? item.metadata : {},
   };
 }
 
