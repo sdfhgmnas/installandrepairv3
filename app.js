@@ -3092,8 +3092,12 @@ async function onDeleteSim(simId) {
 /* ---------------- Page 8: Stock Inventory ---------------- */
 
 const STOCK_CATEGORIES = [
-  "GPS Device",
-  "Sensor",
+  "GPS",
+  "SIM-AIRTEL",
+  "SIM-JIO",
+  "SIM-VI",
+  "SIM-BSNL",
+  "SENSOR",
   "Bracket",
   "Cable",
   "Antenna",
@@ -3105,6 +3109,38 @@ const STOCK_CATEGORIES = [
 ];
 
 const STOCK_UNITS = ["pcs", "set", "box", "meters", "kg", "liters", "pack"];
+
+// Detect what kind of identifiers this category needs.
+function categoryKind(category) {
+  if (!category) return "generic";
+  const c = String(category).toUpperCase();
+  if (c.includes("GPS")) return "gps";
+  if (c.includes("SIM")) return "sim";
+  if (c.includes("SENSOR")) return "sensor";
+  return "generic";
+}
+
+// Render a short summary line for an item's metadata (for the table row).
+function stockMetadataSummary(item) {
+  const kind = categoryKind(item.category);
+  const m = item.metadata || {};
+  if (kind === "gps" && m.imei) return `IMEI: ${m.imei}`;
+  if (kind === "sim") {
+    const p = m.primary || "";
+    const s = m.secondary || "";
+    if (p && s) return `${p} · ${s}`;
+    if (s) return `ICCID: ${s}`;
+    if (p) return `Primary: ${p}`;
+  }
+  if (kind === "sensor") {
+    const sn = m.sensorNo || "";
+    const mac = m.macId || "";
+    if (sn && mac) return `${sn} · ${mac}`;
+    if (sn) return `Sensor: ${sn}`;
+    if (mac) return `MAC: ${mac}`;
+  }
+  return "";
+}
 
 function renderStockPage() {
   if (!stockItemsTableReady) {
@@ -3213,10 +3249,12 @@ function renderStockPage() {
                 )
                 .join(" ")
             : `<span class="muted">—</span>`;
+          const metaSummary = stockMetadataSummary(item);
           return `
             <tr class="${low ? "stock-row-low" : ""}">
               <td>
                 <div class="stock-name">${escapeHtml(item.name)}${low ? ` <span class="low-pill">Low stock</span>` : ""}</div>
+                ${metaSummary ? `<div class="stock-meta mono">${escapeHtml(metaSummary)}</div>` : ""}
                 ${item.notes ? `<div class="stock-notes">${escapeHtml(item.notes.split("\n")[0])}</div>` : ""}
               </td>
               <td>${item.category ? `<span class="cat-pill">${escapeHtml(item.category)}</span>` : `<span class="muted">—</span>`}</td>
@@ -3323,35 +3361,92 @@ function renderStockPage() {
 
 function openStockEditor(itemId, categoryOptions) {
   const item = itemId ? loadStockItems().find((i) => i.id === itemId) : null;
-  const datalistId = "stockCatList";
-  const unitsListId = "stockUnitList";
+  const allItems = loadStockItems();
+
+  // Build a name → most-recent-category map so picking a known name can
+  // auto-fill the category.
+  const nameToCategory = new Map();
+  // Sort by createdAt desc so older items don't overwrite the latest mapping.
+  const sortedItems = [...allItems].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  for (const i of sortedItems) {
+    if (i.name && !nameToCategory.has(i.name.toLowerCase())) {
+      nameToCategory.set(i.name.toLowerCase(), i.category || "");
+    }
+  }
+  const knownNames = Array.from(new Set(sortedItems.map((i) => i.name).filter(Boolean))).sort();
+
+  // Stash on window so the listener can look up without closure capture issues.
+  window.__stockNameCategoryMap = nameToCategory;
 
   modal.innerHTML = `
     <h3>${item ? "✎ Edit item" : "+ Add item"}</h3>
     <div class="field">
       <label for="stkName">Item name <span class="required">*</span></label>
-      <input type="text" id="stkName" autocomplete="off" placeholder="e.g. GPS Device FMC920" value="${escapeHtml(item?.name || "")}" />
+      <input type="text" id="stkName" autocomplete="off" list="stockNameList" placeholder="Type or pick from list..." value="${escapeHtml(item?.name || "")}" />
+      <datalist id="stockNameList">
+        ${knownNames.map((n) => `<option value="${escapeHtml(n)}">`).join("")}
+      </datalist>
+      <p class="hint" id="nameHint">Pick an existing name to auto-fill its category, or type a new one.</p>
     </div>
     <div class="field-row">
       <div class="field">
-        <label for="stkCategory">Category</label>
-        <input type="text" id="stkCategory" autocomplete="off" list="${datalistId}" placeholder="e.g. GPS Device" value="${escapeHtml(item?.category || "")}" />
-        <datalist id="${datalistId}">
+        <label for="stkCategory">Category <span class="required">*</span></label>
+        <input type="text" id="stkCategory" autocomplete="off" list="stockCatList" placeholder="GPS, SIM-AIRTEL, SENSOR..." value="${escapeHtml(item?.category || "")}" />
+        <datalist id="stockCatList">
           ${categoryOptions.map((c) => `<option value="${escapeHtml(c)}">`).join("")}
         </datalist>
       </div>
       <div class="field">
         <label for="stkUnit">Unit</label>
-        <input type="text" id="stkUnit" autocomplete="off" list="${unitsListId}" placeholder="pcs" value="${escapeHtml(item?.unit || "pcs")}" />
-        <datalist id="${unitsListId}">
+        <input type="text" id="stkUnit" autocomplete="off" list="stockUnitList" placeholder="pcs" value="${escapeHtml(item?.unit || "pcs")}" />
+        <datalist id="stockUnitList">
           ${STOCK_UNITS.map((u) => `<option value="${u}">`).join("")}
         </datalist>
       </div>
     </div>
+
+    <!-- Conditional fields based on category -->
+    <div id="metaGps" class="meta-block hidden">
+      <div class="meta-title">📡 GPS device identifier</div>
+      <div class="field">
+        <label for="metaImei">IMEI number <span class="required">*</span></label>
+        <input type="text" id="metaImei" class="mono" inputmode="numeric" autocomplete="off" placeholder="e.g. 867530012345678" value="${escapeHtml(item?.metadata?.imei || "")}" />
+      </div>
+    </div>
+
+    <div id="metaSim" class="meta-block hidden">
+      <div class="meta-title">📶 SIM card numbers</div>
+      <div class="field-row">
+        <div class="field">
+          <label for="metaSimPrimary">Primary number (13-digit)</label>
+          <input type="text" id="metaSimPrimary" class="mono" inputmode="numeric" autocomplete="off" placeholder="e.g. 5753200309565" value="${escapeHtml(item?.metadata?.primary || "")}" />
+        </div>
+        <div class="field">
+          <label for="metaSimSecondary">Secondary / ICCID (20-digit) <span class="required">*</span></label>
+          <input type="text" id="metaSimSecondary" class="mono" inputmode="numeric" autocomplete="off" placeholder="e.g. 89918720507069156677" value="${escapeHtml(item?.metadata?.secondary || "")}" />
+        </div>
+      </div>
+      <p class="hint">This SIM will also be added to the <strong>SIM Database</strong> automatically so Akash can use it during repair.</p>
+    </div>
+
+    <div id="metaSensor" class="meta-block hidden">
+      <div class="meta-title">🛰️ Sensor identifiers</div>
+      <div class="field-row">
+        <div class="field">
+          <label for="metaSensorNo">Sensor number <span class="required">*</span></label>
+          <input type="text" id="metaSensorNo" class="mono" autocomplete="off" placeholder="e.g. SN-12345" value="${escapeHtml(item?.metadata?.sensorNo || "")}" />
+        </div>
+        <div class="field">
+          <label for="metaMacId">MAC ID <span class="required">*</span></label>
+          <input type="text" id="metaMacId" class="mono" autocomplete="off" placeholder="e.g. AA:BB:CC:DD:EE:FF" value="${escapeHtml(item?.metadata?.macId || "")}" />
+        </div>
+      </div>
+    </div>
+
     <div class="field-row">
       <div class="field">
         <label for="stkQty">Quantity <span class="required">*</span></label>
-        <input type="number" id="stkQty" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="0" value="${item ? item.quantity : 0}" class="mono" />
+        <input type="number" id="stkQty" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="1" value="${item ? item.quantity : 1}" class="mono" />
       </div>
       <div class="field">
         <label for="stkCost">Cost per unit (₹)</label>
@@ -3378,16 +3473,67 @@ function openStockEditor(itemId, categoryOptions) {
   modal.querySelector('[data-act="cancel"]').onclick = closeModal;
   modal.querySelector("#stkName")?.focus();
 
+  const nameEl = modal.querySelector("#stkName");
+  const categoryEl = modal.querySelector("#stkCategory");
+  const hintEl = modal.querySelector("#nameHint");
+
+  // Toggle the meta blocks based on category.
+  function refreshMetaVisibility() {
+    const kind = categoryKind(categoryEl.value);
+    modal.querySelector("#metaGps").classList.toggle("hidden", kind !== "gps");
+    modal.querySelector("#metaSim").classList.toggle("hidden", kind !== "sim");
+    modal.querySelector("#metaSensor").classList.toggle("hidden", kind !== "sensor");
+  }
+  refreshMetaVisibility();
+  categoryEl.addEventListener("input", refreshMetaVisibility);
+  categoryEl.addEventListener("change", refreshMetaVisibility);
+
+  // When the name matches an existing item, auto-fill its category.
+  function autofillCategoryIfKnown() {
+    const typed = nameEl.value.trim();
+    if (!typed) {
+      if (hintEl) hintEl.textContent = "Pick an existing name to auto-fill its category, or type a new one.";
+      return;
+    }
+    const cat = nameToCategory.get(typed.toLowerCase());
+    if (cat && !categoryEl.value.trim()) {
+      categoryEl.value = cat;
+      refreshMetaVisibility();
+      if (hintEl) {
+        hintEl.textContent = `✓ Recognised — auto-filled category "${cat}".`;
+        hintEl.className = "hint hint-ok";
+      }
+    } else if (cat) {
+      if (hintEl) {
+        hintEl.textContent = `Existing item. Category for this product is usually "${cat}".`;
+        hintEl.className = "hint";
+      }
+    } else {
+      if (hintEl) {
+        hintEl.textContent = "New item — pick or type a category below.";
+        hintEl.className = "hint";
+      }
+    }
+  }
+  nameEl.addEventListener("input", autofillCategoryIfKnown);
+  nameEl.addEventListener("change", autofillCategoryIfKnown);
+  nameEl.addEventListener("blur", autofillCategoryIfKnown);
+
   modal.querySelector('[data-act="save"]').onclick = async () => {
-    const name = modal.querySelector("#stkName").value.trim();
-    const category = modal.querySelector("#stkCategory").value.trim() || null;
+    const name = nameEl.value.trim();
+    const category = categoryEl.value.trim() || null;
     const unit = modal.querySelector("#stkUnit").value.trim() || "pcs";
     const qtyRaw = modal.querySelector("#stkQty").value;
     const costRaw = modal.querySelector("#stkCost").value;
     const lowRaw = modal.querySelector("#stkLow").value;
     const notes = modal.querySelector("#stkNotes").value.trim() || null;
+
     if (!name) {
       showToast("Item name is required.", true);
+      return;
+    }
+    if (!category) {
+      showToast("Category is required.", true);
       return;
     }
     const quantity = qtyRaw === "" ? 0 : Number(qtyRaw);
@@ -3395,6 +3541,43 @@ function openStockEditor(itemId, categoryOptions) {
       showToast("Quantity must be a non-negative number.", true);
       return;
     }
+
+    // Collect category-specific metadata.
+    const kind = categoryKind(category);
+    const metadata = {};
+    let simPrimary = null;
+    let simSecondary = null;
+    if (kind === "gps") {
+      const imei = modal.querySelector("#metaImei").value.trim();
+      if (!imei) {
+        showToast("IMEI number is required for GPS items.", true);
+        return;
+      }
+      metadata.imei = imei;
+    } else if (kind === "sim") {
+      simPrimary = modal.querySelector("#metaSimPrimary").value.trim();
+      simSecondary = modal.querySelector("#metaSimSecondary").value.trim();
+      if (!simSecondary) {
+        showToast("Secondary / ICCID is required for SIM items.", true);
+        return;
+      }
+      metadata.primary = simPrimary || null;
+      metadata.secondary = simSecondary;
+    } else if (kind === "sensor") {
+      const sensorNo = modal.querySelector("#metaSensorNo").value.trim();
+      const macId = modal.querySelector("#metaMacId").value.trim();
+      if (!sensorNo) {
+        showToast("Sensor number is required.", true);
+        return;
+      }
+      if (!macId) {
+        showToast("MAC ID is required.", true);
+        return;
+      }
+      metadata.sensorNo = sensorNo;
+      metadata.macId = macId;
+    }
+
     closeModal();
     renderLoading(item ? "Saving changes..." : "Adding item...");
     try {
@@ -3407,11 +3590,25 @@ function openStockEditor(itemId, categoryOptions) {
         costPerUnit: costRaw === "" ? null : Number(costRaw),
         lowStockThreshold: lowRaw === "" ? null : Number(lowRaw),
         notes,
+        metadata,
       };
       if (item) {
         await updateStockItem(payload);
       } else {
         await insertStockItem(payload);
+      }
+      // SIM integration: also upsert into the sims table so it shows up in
+      // the SIM Database and is auto-found during Akash's repair flow.
+      if (kind === "sim" && simSecondary && simsTableReady) {
+        try {
+          await upsertSim({
+            primaryNumber: simPrimary || null,
+            secondaryNumber: simSecondary,
+            notes: `Stock: ${name}`,
+          });
+        } catch (simErr) {
+          console.warn("Stock SIM also-write to sims table failed:", simErr);
+        }
       }
       await refreshAllData();
       render();
