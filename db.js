@@ -448,13 +448,14 @@ async function deleteStockItem(itemId) {
 function rowToStockTx(row) {
   return {
     id: row.id,
-    stockItemId: row.stock_item_id,
+    stockItemId: row.stock_item_id || null,
     installationId: row.installation_id || null,
     vehicleNo: row.vehicle_no || null,
     delta: Number(row.delta || 0),
     resultingQuantity: row.resulting_quantity != null ? Number(row.resulting_quantity) : null,
     note: row.note || null,
     createdBy: row.created_by || null,
+    itemNameSnapshot: row.item_name_snapshot || null,
     createdAt: row.created_at,
   };
 }
@@ -496,13 +497,14 @@ async function insertStockTransaction(tx) {
   const { data, error } = await getDb()
     .from("stock_transactions")
     .insert({
-      stock_item_id: tx.stockItemId,
+      stock_item_id: tx.stockItemId || null,
       installation_id: tx.installationId || null,
       vehicle_no: tx.vehicleNo || null,
       delta: Number(tx.delta),
       resulting_quantity: tx.resultingQuantity != null ? Number(tx.resultingQuantity) : null,
       note: tx.note || null,
       created_by: tx.createdBy || null,
+      item_name_snapshot: tx.itemNameSnapshot || null,
     })
     .select()
     .single();
@@ -516,6 +518,74 @@ async function insertStockTransaction(tx) {
     throw new Error(error.message);
   }
   return rowToStockTx(data);
+}
+
+/* ============================================================
+   STOCK CATEGORIES TABLE
+   Admin-managed list of categories used in the Stock page.
+   ============================================================ */
+
+function rowToCategory(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+  };
+}
+
+const STOCK_CATEGORIES_TABLE_MISSING = "STOCK_CATEGORIES_TABLE_MISSING";
+
+function isMissingCategoriesTableError(err) {
+  if (!err) return false;
+  const msg = (err.message || "").toLowerCase();
+  return (
+    err.code === "42P01" ||
+    err.code === "PGRST205" ||
+    err.code === "PGRST116" ||
+    (msg.includes("relation") && msg.includes("stock_categories") && msg.includes("does not exist")) ||
+    (msg.includes("could not find") && msg.includes("stock_categories") && msg.includes("schema")) ||
+    (msg.includes("schema cache") && msg.includes("stock_categories"))
+  );
+}
+
+async function fetchStockCategories() {
+  const { data, error } = await getDb()
+    .from("stock_categories")
+    .select("*")
+    .order("name", { ascending: true });
+  if (error) {
+    if (isMissingCategoriesTableError(error)) {
+      const e = new Error("stock_categories table missing — please run stock-categories-migration.sql in Supabase");
+      e.code = STOCK_CATEGORIES_TABLE_MISSING;
+      throw e;
+    }
+    throw new Error(error.message);
+  }
+  return (data || []).map(rowToCategory);
+}
+
+async function insertStockCategory(name) {
+  const trimmed = String(name).trim();
+  if (!trimmed) throw new Error("Category name cannot be empty.");
+  const { data, error } = await getDb()
+    .from("stock_categories")
+    .insert({ name: trimmed })
+    .select()
+    .single();
+  if (error) {
+    // Unique violation -> friendlier message
+    if ((error.message || "").toLowerCase().includes("duplicate")) {
+      throw new Error(`Category "${trimmed}" already exists.`);
+    }
+    throw new Error(error.message);
+  }
+  return rowToCategory(data);
+}
+
+async function deleteStockCategory(id) {
+  const { error } = await getDb().from("stock_categories").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  return true;
 }
 
 // Realtime subscription. onChange(eventType, payload):
@@ -549,6 +619,11 @@ function subscribeRealtime(onChange) {
       "postgres_changes",
       { event: "*", schema: "public", table: "stock_transactions" },
       (payload) => onChange("data", { table: "stock_transactions", payload })
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "stock_categories" },
+      (payload) => onChange("data", { table: "stock_categories", payload })
     )
     .subscribe((status) => onChange("status", { status }));
   return channel;
