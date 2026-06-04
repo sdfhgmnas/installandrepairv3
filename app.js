@@ -28,9 +28,11 @@ let maintenanceRecords = [];
 let sims = [];
 let stockItems = [];
 let stockTransactions = [];
+let stockCategories = [];
 let simsTableReady = true;
 let stockItemsTableReady = true;
 let stockTxTableReady = true;
+let stockCategoriesTableReady = true;
 let isLoadingData = false;
 let lastSyncedAt = null;
 
@@ -38,6 +40,74 @@ let lastSyncedAt = null;
 let realtimeChannel = null;
 let realtimeStatus = "idle";
 let refreshTimer = null;
+
+/* ============================================================
+   STOCK AUTO-CONSUME
+   When an installation / repair uses an identifier (IMEI, SIM
+   secondary, sensor number, MAC), decrement the matching
+   stock_items row by 1 and log a transaction linked to the
+   installation so the Stock page shows "Used in VEHICLE-X" with
+   no manual ± Adjust needed.
+   ============================================================ */
+
+async function consumeStockFor(identifiers, link) {
+  if (!stockItemsTableReady) return;
+  const seen = new Set();
+  const candidates = [];
+
+  function matchBy(predicate) {
+    for (const it of loadStockItems()) {
+      if (seen.has(it.id)) continue;
+      if (it.quantity <= 0) continue;
+      if (predicate(it)) {
+        candidates.push(it);
+        seen.add(it.id);
+      }
+    }
+  }
+
+  if (identifiers.imei) {
+    const v = String(identifiers.imei).trim().toLowerCase();
+    matchBy((it) => (it.metadata?.imei || "").toLowerCase() === v);
+  }
+  if (identifiers.simSecondary) {
+    const v = String(identifiers.simSecondary).trim().toLowerCase();
+    matchBy((it) => (it.metadata?.secondary || "").toLowerCase() === v);
+  }
+  if (identifiers.sensorNo) {
+    const v = String(identifiers.sensorNo).trim().toLowerCase();
+    matchBy((it) => (it.metadata?.sensorNo || "").toLowerCase() === v);
+  }
+  if (identifiers.macId) {
+    const v = String(identifiers.macId).trim().toLowerCase();
+    matchBy((it) => (it.metadata?.macId || "").toLowerCase() === v);
+  }
+
+  for (const it of candidates) {
+    const next = it.quantity - 1;
+    try {
+      await updateStockItem({ ...it, quantity: next });
+      if (stockTxTableReady) {
+        try {
+          await insertStockTransaction({
+            stockItemId: it.id,
+            installationId: link.installationId || null,
+            vehicleNo: link.vehicleNo || null,
+            delta: -1,
+            resultingQuantity: next,
+            note: link.note || "Auto-consumed on installation",
+            createdBy: currentUser || "akash",
+            itemNameSnapshot: it.name + (it.category ? ` (${it.category})` : ""),
+          });
+        } catch (txErr) {
+          console.warn("Auto-consume transaction record failed:", txErr);
+        }
+      }
+    } catch (err) {
+      console.warn("Auto-consume failed for stock item", it.name, err);
+    }
+  }
+}
 
 /* ============================================================
    TASK ENGINE
@@ -578,6 +648,18 @@ async function refreshAllData() {
         console.warn("stock_transactions table missing — stock usage history features disabled until migration runs.");
         stockTransactions = [];
         stockTxTableReady = false;
+      } else {
+        throw err;
+      }
+    }
+    try {
+      stockCategories = await withTimeout(fetchStockCategories(), 20000, "Fetch stock categories");
+      stockCategoriesTableReady = true;
+    } catch (err) {
+      if (err.code === STOCK_CATEGORIES_TABLE_MISSING) {
+        console.warn("stock_categories table missing — using preset list until migration runs.");
+        stockCategories = [];
+        stockCategoriesTableReady = false;
       } else {
         throw err;
       }
@@ -1386,7 +1468,22 @@ function handleInstallSubmit() {
         createdBy: "akash",
       };
 
-      await insertInstallation(newInstall);
+      const saved = await insertInstallation(newInstall);
+      // Auto-consume matching stock entries (GPS by IMEI, SIM by secondary,
+      // sensor by sensor no / MAC).
+      await consumeStockFor(
+        {
+          imei: data.imei,
+          simSecondary: data.sim, // may be a primary 13-digit; harmless if no match
+          sensorNo: data.sensor,
+          macId: data.mac,
+        },
+        {
+          installationId: saved?.id || newInstall.id,
+          vehicleNo: data.vehicle,
+          note: "Used on new installation",
+        }
+      );
       await refreshAllData();
       showToast("Installation saved successfully!");
       setView("akash-home");
@@ -1682,6 +1779,18 @@ function renderRepairForm() {
     try {
       await updateInstallation(updatedInst);
       await insertMaintenanceRecord(newRecord);
+      // Auto-consume newly-used stock entries.
+      await consumeStockFor(
+        {
+          imei: deviceChange ? newImei : null,
+          simSecondary: simChange ? newSim : null,
+        },
+        {
+          installationId: inst.id,
+          vehicleNo: inst.vehicleNo,
+          note: "Used during repair",
+        }
+      );
       await refreshAllData();
       showToast("Repair work saved successfully!");
       setView("akash-home");
@@ -3091,22 +3200,30 @@ async function onDeleteSim(simId) {
 
 /* ---------------- Page 8: Stock Inventory ---------------- */
 
-const STOCK_CATEGORIES = [
+// Default category list used to seed the DB (also used as fallback if the
+// stock_categories migration hasn't been run yet).
+const STOCK_CATEGORIES_DEFAULT = [
   "GPS",
   "SIM-AIRTEL",
   "SIM-JIO",
-  "SIM-VI",
-  "SIM-BSNL",
-  "SENSOR",
-  "Bracket",
-  "Cable",
-  "Antenna",
-  "Adapter",
-  "Battery",
-  "Tool",
-  "Consumable",
-  "Other",
+  "Sensor",
+  "Roll",
+  "Tape",
+  "Drill",
+  "Drill beat",
 ];
+
+// Live category options used in dropdowns: admin-managed list from the DB,
+// merged with any categories already used by existing items (so categories
+// added before the table migration don't disappear).
+function getCategoryOptions() {
+  const fromDb = stockCategories.map((c) => c.name);
+  const fromItems = stockItems.map((i) => i.category).filter(Boolean);
+  const merged = stockCategoriesTableReady
+    ? Array.from(new Set([...fromDb, ...fromItems]))
+    : Array.from(new Set([...STOCK_CATEGORIES_DEFAULT, ...fromItems]));
+  return merged.sort();
+}
 
 const STOCK_UNITS = ["pcs", "set", "box", "meters", "kg", "liters", "pack"];
 
@@ -3303,7 +3420,7 @@ function renderStockPage() {
   const liveCategories = Array.from(
     new Set(items.map((i) => i.category).filter(Boolean))
   );
-  const allCategoryOptions = Array.from(new Set([...STOCK_CATEGORIES, ...liveCategories])).sort();
+  const allCategoryOptions = getCategoryOptions();
 
   let filtered = items;
   if (stockCategoryFilter !== "all") {
@@ -3416,6 +3533,7 @@ function renderStockPage() {
             <p class="section-subtitle">Track equipment, spares, and consumables. Use <strong>± Adjust</strong> to quickly add or remove stock when receiving or using items.</p>
           </div>
           <div class="bulk-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="manageCatsBtn">⚙️ Manage categories</button>
             <button type="button" class="btn btn-primary btn-sm" id="addStockBtn">+ Add Item</button>
           </div>
         </div>
@@ -3469,6 +3587,7 @@ function renderStockPage() {
   document.getElementById("addStockBtn")?.addEventListener("click", () =>
     openStockEditor(null, allCategoryOptions)
   );
+  document.getElementById("manageCatsBtn")?.addEventListener("click", openCategoryManager);
   app.querySelectorAll(".stock-edit").forEach((btn) => {
     btn.addEventListener("click", () => openStockEditor(btn.dataset.id, allCategoryOptions));
   });
@@ -4079,15 +4198,30 @@ function openStockHistory(itemId) {
 async function onDeleteStockItem(itemId) {
   const item = loadStockItems().find((i) => i.id === itemId);
   if (!item) return;
-  const ok = await showConfirm({
-    title: "Delete this item?",
-    message: `Remove "${item.name}" (${item.quantity} ${item.unit}) from stock? This cannot be undone.`,
-    confirmLabel: "Delete",
-    danger: true,
-  });
-  if (!ok) return;
+
+  const reason = await promptForDeleteReason(item);
+  if (reason == null) return; // cancelled
+
   renderLoading("Deleting item...");
   try {
+    // 1) Record the deletion as a transaction so audit history persists.
+    if (stockTxTableReady) {
+      try {
+        await insertStockTransaction({
+          stockItemId: item.id, // FK will be set to NULL after delete
+          installationId: null,
+          vehicleNo: null,
+          delta: -item.quantity,
+          resultingQuantity: 0,
+          note: `DELETED — reason: ${reason}`,
+          createdBy: currentUser || "admin",
+          itemNameSnapshot: item.name + (item.category ? ` (${item.category})` : ""),
+        });
+      } catch (txErr) {
+        console.warn("Deletion transaction record failed:", txErr);
+      }
+    }
+    // 2) Delete the row.
     await deleteStockItem(itemId);
     await refreshAllData();
     render();
@@ -4097,6 +4231,141 @@ async function onDeleteStockItem(itemId) {
     render();
     showToast(err.message || "Delete failed.", true);
   }
+}
+
+function promptForDeleteReason(item) {
+  return new Promise((resolve) => {
+    modal.innerHTML = `
+      <h3>🗑️ Delete this item?</h3>
+      <p class="modal-desc">You're about to remove <strong>${escapeHtml(item.name)}</strong>${item.category ? ` (${escapeHtml(item.category)})` : ""} — current stock <strong>${item.quantity} ${escapeHtml(item.unit)}</strong>. This cannot be undone.</p>
+      <div class="field">
+        <label for="delReason">Reason for deletion <span class="required">*</span></label>
+        <input type="text" id="delReason" autocomplete="off" placeholder="e.g. wrong entry, damaged, returned to supplier" />
+        <p class="hint">The reason will be recorded in the stock audit history for accountability.</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" data-act="cancel">Cancel</button>
+        <button type="button" class="btn btn-danger" data-act="confirm">Delete</button>
+      </div>
+    `;
+    modalOverlay.classList.remove("hidden");
+    const input = modal.querySelector("#delReason");
+    input?.focus();
+
+    const done = (val) => {
+      closeModal();
+      resolve(val);
+    };
+    modal.querySelector('[data-act="cancel"]').onclick = () => done(null);
+    modal.querySelector('[data-act="confirm"]').onclick = () => {
+      const v = (input.value || "").trim();
+      if (!v) {
+        showToast("Please enter a reason for deletion.", true);
+        return;
+      }
+      done(v);
+    };
+    input?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") done(null);
+    });
+    modalOverlay.onclick = (e) => {
+      if (e.target === modalOverlay) done(null);
+    };
+  });
+}
+
+function openCategoryManager() {
+  const cats = loadStockCategories ? loadStockCategories() : stockCategories;
+  const itemsByCat = new Map();
+  for (const it of loadStockItems()) {
+    if (!it.category) continue;
+    itemsByCat.set(it.category, (itemsByCat.get(it.category) || 0) + 1);
+  }
+
+  function rowHtml(cat) {
+    const inUse = itemsByCat.get(cat.name) || 0;
+    return `
+      <div class="cat-row">
+        <span class="cat-pill">${escapeHtml(cat.name)}</span>
+        <span class="cat-usage">${inUse > 0 ? `${inUse} item${inUse === 1 ? "" : "s"} use this` : "not in use"}</span>
+        <button type="button" class="btn btn-danger btn-sm cat-delete" data-id="${escapeHtml(cat.id)}" ${inUse > 0 ? "disabled" : ""} title="${inUse > 0 ? "Cannot delete — items use this category" : "Delete this category"}">Delete</button>
+      </div>
+    `;
+  }
+
+  modal.innerHTML = `
+    <h3>⚙️ Manage categories</h3>
+    <p class="modal-desc">Add new categories or remove ones you don't need. Categories that have items can't be deleted until those items are moved or removed.</p>
+
+    <div class="cat-add-row">
+      <input type="text" id="newCatName" autocomplete="off" placeholder="New category name (e.g. SIM-VI)" />
+      <button type="button" class="btn btn-primary btn-sm" id="addCatBtn">+ Add</button>
+    </div>
+
+    <div class="cat-list" id="catList">
+      ${cats.length ? cats.map(rowHtml).join("") : `<p class="muted">No categories yet. Add one above.</p>`}
+    </div>
+
+    <div class="modal-actions" style="margin-top: 1rem;">
+      <button type="button" class="btn btn-secondary" data-act="cancel">Close</button>
+    </div>
+  `;
+  modalOverlay.classList.remove("hidden");
+  modalOverlay.onclick = (e) => {
+    if (e.target === modalOverlay) closeModal();
+  };
+  modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+
+  function wireListButtons() {
+    modal.querySelectorAll(".cat-delete").forEach((btn) => {
+      if (btn.disabled) return;
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        const cat = stockCategories.find((c) => c.id === id);
+        if (!cat) return;
+        const ok = await showConfirm({
+          title: "Delete category?",
+          message: `Remove "${cat.name}" from the category list? This cannot be undone.`,
+          confirmLabel: "Delete",
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await deleteStockCategory(id);
+          await refreshAllData();
+          // Re-render the modal to reflect the updated list
+          closeModal();
+          openCategoryManager();
+        } catch (err) {
+          showToast(err.message || "Delete failed.", true);
+        }
+      });
+    });
+  }
+  wireListButtons();
+
+  async function addNewCategory() {
+    const name = modal.querySelector("#newCatName").value.trim();
+    if (!name) {
+      showToast("Type a category name first.", true);
+      return;
+    }
+    try {
+      await insertStockCategory(name);
+      await refreshAllData();
+      closeModal();
+      openCategoryManager();
+    } catch (err) {
+      showToast(err.message || "Add failed.", true);
+    }
+  }
+  modal.querySelector("#addCatBtn").onclick = addNewCategory;
+  modal.querySelector("#newCatName").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addNewCategory();
+    }
+  });
 }
 
 function render() {
