@@ -3120,6 +3120,130 @@ function categoryKind(category) {
   return "generic";
 }
 
+// --- Name normalization & fuzzy matching for duplicate prevention ---
+
+// Strip all non-alphanumeric, lowercase. "FMB-02" / "fmb 02" -> "fmb02"
+function normalizeName(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+// Lowercase + sort tokens. "02 FMB" / "FMB-02" both -> "02 fmb"
+function tokenSorted(s) {
+  return String(s || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+
+// Classic Levenshtein distance — bounded so we exit early for cheap.
+function levenshtein(a, b, max = 3) {
+  if (a === b) return 0;
+  const m = a.length;
+  const n = b.length;
+  if (Math.abs(m - n) > max) return max + 1;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = new Array(n + 1);
+  let curr = new Array(n + 1);
+  for (let j = 0; j <= n; j += 1) prev[j] = j;
+  for (let i = 1; i <= m; i += 1) {
+    curr[0] = i;
+    let rowMin = i;
+    for (let j = 1; j <= n; j += 1) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+    if (rowMin > max) return max + 1;
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+// Find the closest existing item to a typed name. Returns { item, reason } or null.
+//   reason = "exact"   -> normalized strings identical
+//   reason = "tokens"  -> same words, different order/separator
+//   reason = "typo"    -> Levenshtein <= 2 (after normalization)
+function findClosestItem(query, excludeId = null) {
+  const items = loadStockItems().filter((i) => i.id !== excludeId);
+  if (!items.length) return null;
+  const qNorm = normalizeName(query);
+  if (qNorm.length < 2) return null;
+  const qSort = tokenSorted(query);
+
+  for (const it of items) {
+    if (normalizeName(it.name) === qNorm) return { item: it, reason: "exact" };
+  }
+  if (qSort) {
+    for (const it of items) {
+      if (tokenSorted(it.name) === qSort) return { item: it, reason: "tokens" };
+    }
+  }
+  if (qNorm.length >= 3) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const it of items) {
+      const d = levenshtein(qNorm, normalizeName(it.name), 2);
+      if (d <= 2 && d < bestDist) {
+        bestDist = d;
+        best = it;
+      }
+    }
+    if (best) return { item: best, reason: "typo" };
+  }
+  return null;
+}
+
+// Rank items for the suggestion dropdown given a query.
+function rankItemSuggestions(query, excludeId = null) {
+  const items = loadStockItems().filter((i) => i.id !== excludeId);
+  if (!items.length) return [];
+
+  // Sort by createdAt desc so recent items naturally come first.
+  const byRecent = [...items].sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
+
+  const q = (query || "").trim();
+  if (!q) {
+    return byRecent.slice(0, 8).map((it) => ({ item: it, reason: "recent" }));
+  }
+
+  const qNorm = normalizeName(q);
+  const qSort = tokenSorted(q);
+
+  const scored = byRecent
+    .map((it) => {
+      const nNorm = normalizeName(it.name);
+      const nSort = tokenSorted(it.name);
+      let score = 0;
+      let reason = "";
+      if (nNorm === qNorm) {
+        score = 100;
+        reason = "exact";
+      } else if (nSort === qSort && qSort) {
+        score = 90;
+        reason = "tokens";
+      } else if (nNorm.startsWith(qNorm)) {
+        score = 70;
+        reason = "starts";
+      } else if (nNorm.includes(qNorm)) {
+        score = 60;
+        reason = "contains";
+      } else if (qNorm.length >= 3 && levenshtein(qNorm, nNorm, 2) <= 2) {
+        score = 40;
+        reason = "typo";
+      }
+      return { item: it, score, reason };
+    })
+    .filter((s) => s.score > 0);
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 8);
+}
+
 // Render a short summary line for an item's metadata (for the table row).
 function stockMetadataSummary(item) {
   const kind = categoryKind(item.category);
@@ -3380,13 +3504,14 @@ function openStockEditor(itemId, categoryOptions) {
 
   modal.innerHTML = `
     <h3>${item ? "✎ Edit item" : "+ Add item"}</h3>
-    <div class="field">
+    <div class="field smart-name-field">
       <label for="stkName">Item name <span class="required">*</span></label>
-      <input type="text" id="stkName" autocomplete="off" list="stockNameList" placeholder="Type or pick from list..." value="${escapeHtml(item?.name || "")}" />
-      <datalist id="stockNameList">
-        ${knownNames.map((n) => `<option value="${escapeHtml(n)}">`).join("")}
-      </datalist>
-      <p class="hint" id="nameHint">Pick an existing name to auto-fill its category, or type a new one.</p>
+      <div class="combobox">
+        <input type="text" id="stkName" autocomplete="off" placeholder="Click to see existing items, or type a new name..." value="${escapeHtml(item?.name || "")}" />
+        <div class="combobox-panel hidden" id="namePanel"></div>
+      </div>
+      <p class="hint" id="nameHint">Pick an existing item from the list to avoid duplicate entries.</p>
+      <div class="dup-warn hidden" id="dupWarn"></div>
     </div>
     <div class="field-row">
       <div class="field">
@@ -3492,7 +3617,10 @@ function openStockEditor(itemId, categoryOptions) {
   function autofillCategoryIfKnown() {
     const typed = nameEl.value.trim();
     if (!typed) {
-      if (hintEl) hintEl.textContent = "Pick an existing name to auto-fill its category, or type a new one.";
+      if (hintEl) {
+        hintEl.textContent = "Pick an existing item from the list to avoid duplicate entries.";
+        hintEl.className = "hint";
+      }
       return;
     }
     const cat = nameToCategory.get(typed.toLowerCase());
@@ -3518,6 +3646,129 @@ function openStockEditor(itemId, categoryOptions) {
   nameEl.addEventListener("input", autofillCategoryIfKnown);
   nameEl.addEventListener("change", autofillCategoryIfKnown);
   nameEl.addEventListener("blur", autofillCategoryIfKnown);
+
+  // ----- Smart combobox: suggestions dropdown + duplicate warning -----
+  const panelEl = modal.querySelector("#namePanel");
+  const dupWarnEl = modal.querySelector("#dupWarn");
+
+  function pickExistingItem(existingItem) {
+    nameEl.value = existingItem.name;
+    if (existingItem.category) {
+      categoryEl.value = existingItem.category;
+      refreshMetaVisibility();
+    }
+    panelEl.classList.add("hidden");
+    autofillCategoryIfKnown();
+    refreshDupWarn();
+  }
+
+  function reasonBadge(reason) {
+    switch (reason) {
+      case "recent":
+        return `<span class="cbi-tag tag-recent">recent</span>`;
+      case "exact":
+        return `<span class="cbi-tag tag-exact">exact match</span>`;
+      case "tokens":
+        return `<span class="cbi-tag tag-warn">same words</span>`;
+      case "starts":
+      case "contains":
+        return `<span class="cbi-tag tag-match">match</span>`;
+      case "typo":
+        return `<span class="cbi-tag tag-warn">possible typo</span>`;
+      default:
+        return "";
+    }
+  }
+
+  function renderSuggestions(query) {
+    const ranked = rankItemSuggestions(query, item?.id);
+    if (!ranked.length) {
+      panelEl.classList.add("hidden");
+      panelEl.innerHTML = "";
+      return;
+    }
+    // Group: "Recently added" header if showing recent items (no query)
+    const headerHtml = !query.trim() ? `<div class="cb-header">Recently added — click to reuse</div>` : "";
+    const itemsHtml = ranked
+      .map((s) => {
+        const it = s.item;
+        const metaSummary = stockMetadataSummary(it);
+        return `
+          <button type="button" class="combobox-item" data-id="${escapeHtml(it.id)}">
+            <div class="cbi-main">
+              <span class="cbi-name">${escapeHtml(it.name)}</span>
+              ${reasonBadge(s.reason)}
+            </div>
+            <div class="cbi-sub">
+              ${it.category ? `<span class="cat-pill">${escapeHtml(it.category)}</span>` : `<span class="muted">no category</span>`}
+              <span class="muted">·</span>
+              <span class="mono">${it.quantity} ${escapeHtml(it.unit)}</span>
+              ${metaSummary ? `<span class="muted"> · </span><span class="mono cbi-meta">${escapeHtml(metaSummary)}</span>` : ""}
+            </div>
+          </button>`;
+      })
+      .join("");
+    panelEl.innerHTML = headerHtml + itemsHtml;
+    panelEl.classList.remove("hidden");
+
+    panelEl.querySelectorAll(".combobox-item").forEach((btn) => {
+      // mousedown fires BEFORE blur, so the click is registered even if
+      // input loses focus on click.
+      btn.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const id = btn.dataset.id;
+        const found = loadStockItems().find((i) => i.id === id);
+        if (found) pickExistingItem(found);
+      });
+    });
+  }
+
+  function refreshDupWarn() {
+    const typed = nameEl.value.trim();
+    if (!typed) {
+      dupWarnEl.classList.add("hidden");
+      dupWarnEl.innerHTML = "";
+      return;
+    }
+    const match = findClosestItem(typed, item?.id);
+    if (!match) {
+      dupWarnEl.classList.add("hidden");
+      dupWarnEl.innerHTML = "";
+      return;
+    }
+    let icon = "⚠️";
+    let label = "";
+    let cls = "dup-warn dup-typo";
+    if (match.reason === "exact") {
+      icon = "ℹ️";
+      label = `Already in stock as <strong>${escapeHtml(match.item.name)}</strong>${match.item.category ? ` (${escapeHtml(match.item.category)})` : ""}. Pick it instead of creating a new entry.`;
+      cls = "dup-warn dup-exact";
+    } else if (match.reason === "tokens") {
+      label = `Looks like the same product, different order/spacing: <strong>${escapeHtml(match.item.name)}</strong>${match.item.category ? ` (${escapeHtml(match.item.category)})` : ""}. Reuse it to avoid duplicates.`;
+      cls = "dup-warn dup-tokens";
+    } else if (match.reason === "typo") {
+      label = `Did you mean <strong>${escapeHtml(match.item.name)}</strong>${match.item.category ? ` (${escapeHtml(match.item.category)})` : ""}?`;
+      cls = "dup-warn dup-typo";
+    }
+    dupWarnEl.className = cls;
+    dupWarnEl.innerHTML = `${icon} ${label} <button type="button" class="dup-pick" data-id="${escapeHtml(match.item.id)}">Use existing →</button>`;
+    dupWarnEl.classList.remove("hidden");
+    dupWarnEl.querySelector(".dup-pick")?.addEventListener("click", () => {
+      pickExistingItem(match.item);
+    });
+  }
+
+  nameEl.addEventListener("focus", () => renderSuggestions(nameEl.value));
+  nameEl.addEventListener("input", () => {
+    renderSuggestions(nameEl.value);
+    refreshDupWarn();
+  });
+  // Delay hide so the mousedown handler can fire on suggestion clicks.
+  nameEl.addEventListener("blur", () => {
+    setTimeout(() => panelEl.classList.add("hidden"), 120);
+  });
+  // Initial duplicate check if editing
+  if (item) refreshDupWarn();
 
   modal.querySelector('[data-act="save"]').onclick = async () => {
     const name = nameEl.value.trim();
