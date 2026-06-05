@@ -3501,20 +3501,16 @@ function renderStockPage() {
               <td>${item.category ? `<span class="cat-pill">${escapeHtml(item.category)}</span>` : `<span class="muted">—</span>`}</td>
               <td class="mono qty-cell">${fmtQty(item.quantity)}</td>
               <td class="mono">${escapeHtml(item.unit)}</td>
-              <td class="mono">${fmtMoney(item.costPerUnit)}</td>
-              <td class="mono">${fmtMoney(value)}</td>
               <td class="recent-use">${recentHtml}</td>
               <td class="date-cell">${escapeHtml(formatDateTime(item.updatedAt))}</td>
               <td class="row-actions">
-                <button type="button" class="btn btn-outline btn-sm stock-adjust" data-id="${item.id}" title="Quick adjust">± Adjust</button>
-                <button type="button" class="btn btn-outline btn-sm stock-history" data-id="${item.id}" title="View history">🕐 History</button>
                 <button type="button" class="btn btn-outline btn-sm stock-edit" data-id="${item.id}">✎ Edit</button>
                 <button type="button" class="btn btn-danger btn-sm stock-delete" data-id="${item.id}">Delete</button>
               </td>
             </tr>`;
         })
         .join("")
-    : `<tr class="empty-row"><td colspan="9">${q || stockCategoryFilter !== "all" ? "No items match the filters." : "No items in stock yet. Click + Add Item to start."}</td></tr>`;
+    : `<tr class="empty-row"><td colspan="7">${q || stockCategoryFilter !== "all" ? "No items match the filters." : "No items in stock yet. Click + Add Item to start."}</td></tr>`;
 
   app.innerHTML = `
     ${renderHeader("Stock Inventory", "Equipment, spares, and consumables")}
@@ -3523,14 +3519,13 @@ function renderStockPage() {
       <div class="summary-grid">
         <div class="summary-box"><strong>${totalItems}</strong><span>Items</span></div>
         <div class="summary-box"><strong>${fmtQty(totalUnits)}</strong><span>Total units</span></div>
-        <div class="summary-box"><strong>${fmtMoney(totalValue)}</strong><span>Total value</span></div>
         <div class="summary-box ${lowStockItems.length ? "summary-warn" : ""}"><strong>${lowStockItems.length}</strong><span>Low stock</span></div>
       </div>
       <section class="card">
         <div class="section-heading">
           <div>
             <h2>All Items (${items.length})</h2>
-            <p class="section-subtitle">Track equipment, spares, and consumables. Use <strong>± Adjust</strong> to quickly add or remove stock when receiving or using items.</p>
+            <p class="section-subtitle">Track equipment, spares, and consumables. Stock is auto-consumed when Akash uses an item in an installation or repair.</p>
           </div>
           <div class="bulk-actions">
             <button type="button" class="btn btn-secondary btn-sm" id="manageCatsBtn">⚙️ Manage categories</button>
@@ -3549,8 +3544,6 @@ function renderStockPage() {
                 <th>Category</th>
                 <th class="num-th">Qty</th>
                 <th>Unit</th>
-                <th class="num-th">Cost / unit</th>
-                <th class="num-th">Value</th>
                 <th>Recent use</th>
                 <th>Last updated</th>
                 <th></th>
@@ -3590,12 +3583,6 @@ function renderStockPage() {
   document.getElementById("manageCatsBtn")?.addEventListener("click", openCategoryManager);
   app.querySelectorAll(".stock-edit").forEach((btn) => {
     btn.addEventListener("click", () => openStockEditor(btn.dataset.id, allCategoryOptions));
-  });
-  app.querySelectorAll(".stock-adjust").forEach((btn) => {
-    btn.addEventListener("click", () => openStockAdjust(btn.dataset.id));
-  });
-  app.querySelectorAll(".stock-history").forEach((btn) => {
-    btn.addEventListener("click", () => openStockHistory(btn.dataset.id));
   });
   app.querySelectorAll(".stock-delete").forEach((btn) => {
     btn.addEventListener("click", () => onDeleteStockItem(btn.dataset.id));
