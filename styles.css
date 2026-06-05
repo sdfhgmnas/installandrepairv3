@@ -2422,3 +2422,17 @@ tbody tr:hover {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+
+/* Supplier pill (stock page) */
+.supplier-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.55rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  background: rgba(139, 92, 246, 0.1);
+  color: #6d28d9;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 999px;
+  white-space: nowrap;
+}
