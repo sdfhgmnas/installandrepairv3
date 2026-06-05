@@ -2871,6 +2871,7 @@ function renderDashboard() {
 function renderInstallationsPage() {
   const allInstalls = loadInstallations();
   const q = searchQuery.toLowerCase().trim();
+  const tokens = q.split(/\s+/).filter(Boolean);
   const filtered = allInstalls.filter((i) => {
     if (!q) return true;
     const hay = [
@@ -2881,10 +2882,11 @@ function renderInstallationsPage() {
       i.secondarySim || "",
       ...i.imeiHistory.map((h) => h.value),
       ...i.simHistory.map((s) => s.value),
+      ...i.simHistory.map((s) => s.secondaryValue || ""),
     ]
       .join(" ")
       .toLowerCase();
-    return hay.includes(q);
+    return tokens.every((t) => hay.includes(t));
   });
 
   app.innerHTML = `
@@ -2977,12 +2979,22 @@ function renderInstallationsPage() {
 function renderRepairsPage() {
   const allMaint = loadMaintenance();
   const q = searchQuery.toLowerCase().trim();
+  const tokens = q.split(/\s+/).filter(Boolean);
   const filtered = allMaint.filter((m) => {
     if (!q) return true;
-    return [m.imei, m.vehicleNo, m.newSimNo, m.newImei, workLabels(m)]
+    const hay = [
+      m.imei,
+      m.vehicleNo,
+      m.oldImei || "",
+      m.newImei || "",
+      m.oldSimNo || "",
+      m.newSimNo || "",
+      m.otherWorkText || "",
+      workLabels(m),
+    ]
       .join(" ")
-      .toLowerCase()
-      .includes(q);
+      .toLowerCase();
+    return tokens.every((t) => hay.includes(t));
   });
 
   app.innerHTML = `
@@ -3385,12 +3397,13 @@ function renderSimDb() {
   }
 
   const q = simDbQuery.toLowerCase().trim();
+  const tokens = q.split(/\s+/).filter(Boolean);
   const matches = allSims.filter((s) => {
     if (!q) return true;
     const hay = [s.primaryNumber || "", s.secondaryNumber || "", s.notes || ""]
       .join(" ")
       .toLowerCase();
-    return hay.includes(q);
+    return tokens.every((t) => hay.includes(t));
   });
   matches.sort((a, b) => {
     // Pending-primary rows first, then alphabetical by secondary.
@@ -3798,11 +3811,27 @@ function renderStockPage() {
     filtered = filtered.filter((i) => (i.category || "Uncategorized") === stockCategoryFilter);
   }
   if (q) {
+    // Tokenise the query so "fmb 920" matches "FMB-920" and a long IMEI
+    // can be searched by any contiguous substring (like Ctrl+F).
+    const tokens = q.split(/\s+/).filter(Boolean);
     filtered = filtered.filter((i) => {
-      const hay = [i.name, i.category || "", i.unit || "", i.notes || ""]
+      const m = i.metadata || {};
+      const hay = [
+        i.name,
+        i.category || "",
+        i.unit || "",
+        i.notes || "",
+        i.supplier || "",
+        m.imei || "",
+        m.primary || "",
+        m.secondary || "",
+        m.sensorNo || "",
+        m.macId || "",
+      ]
         .join(" ")
         .toLowerCase();
-      return hay.includes(q);
+      // ALL tokens must match (AND search)
+      return tokens.every((t) => hay.includes(t));
     });
   }
 
@@ -3908,7 +3937,7 @@ function renderStockPage() {
           </div>
         </div>
         <div class="list-tools admin-search">
-          <input type="search" id="stockSearch" placeholder="Search name, category, notes..." value="${escapeHtml(stockQuery)}" />
+          <input type="search" id="stockSearch" placeholder="Search anything — name, IMEI, SIM number, MAC, supplier..." value="${escapeHtml(stockQuery)}" />
         </div>
         ${liveCategories.length ? chipsHtml : ""}
         <div class="table-wrap">
