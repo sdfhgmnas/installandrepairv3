@@ -2413,3 +2413,12 @@ tbody tr:hover {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* in-use pill (live installation cross-reference) */
+.use-pill .use-qty.in-use {
+  color: var(--success);
+  background: var(--success-soft);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
