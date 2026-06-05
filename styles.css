@@ -2436,3 +2436,398 @@ tbody tr:hover {
   border-radius: 999px;
   white-space: nowrap;
 }
+
+/* ============================================================
+   UI POLISH PASS — refined spacing, tighter cards, better
+   action button layout, more elegant stats.
+   ============================================================ */
+
+/* Compact app header */
+.app-header,
+.header-row {
+  padding: 0.8rem 1.1rem !important;
+}
+
+.app-header .icon-tile,
+.app-header .header-icon {
+  width: 42px;
+  height: 42px;
+}
+
+.app-header h1 {
+  font-size: 1.15rem;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.app-header .header-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0.1rem 0 0;
+}
+
+/* Tighter, more elegant stat boxes */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.6rem;
+  margin: 0.75rem 0;
+}
+
+.summary-box {
+  padding: 0.7rem 0.9rem !important;
+  border-radius: 10px !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-left: 3px solid var(--primary) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-height: auto !important;
+}
+
+.summary-box strong {
+  font-size: 1.5rem !important;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text);
+}
+
+.summary-box span {
+  font-size: 0.72rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.summary-box.summary-warn {
+  border-left-color: var(--warn) !important;
+}
+
+.summary-box.summary-danger {
+  border-left-color: var(--danger) !important;
+}
+
+.summary-box.summary-ok {
+  border-left-color: var(--success) !important;
+}
+
+/* Make stat boxes clickable feel */
+.summary-box[role="button"],
+.summary-box.clickable {
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+
+.summary-box[role="button"]:hover,
+.summary-box.clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08) !important;
+}
+
+/* Section heading: keep title + actions on one line, wrap cleanly */
+.section-heading {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 0.75rem !important;
+  flex-wrap: wrap !important;
+  margin-bottom: 0.85rem;
+}
+
+.section-heading > div:first-child {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.section-heading h2 {
+  font-size: 1.05rem !important;
+  margin: 0 0 0.15rem !important;
+  letter-spacing: -0.01em;
+}
+
+.section-subtitle {
+  font-size: 0.8rem !important;
+  color: var(--text-muted);
+  margin: 0 !important;
+  line-height: 1.45;
+}
+
+/* Action buttons row: flow nicely on one line, wrap to next together */
+.bulk-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 0.45rem !important;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.bulk-actions .btn-sm {
+  padding: 0.42rem 0.85rem !important;
+  font-size: 0.82rem !important;
+  white-space: nowrap;
+}
+
+/* Refined card */
+.card {
+  border-radius: 12px !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03), 0 0 0 1px rgba(15, 23, 42, 0.02) !important;
+  padding: 1rem 1.1rem !important;
+}
+
+@media (min-width: 768px) {
+  .card {
+    padding: 1.2rem 1.3rem !important;
+  }
+}
+
+/* Tighter admin nav tabs */
+.admin-nav {
+  gap: 0.35rem !important;
+  margin-bottom: 0.85rem !important;
+}
+
+.admin-nav .nav-link,
+.admin-nav button {
+  padding: 0.4rem 0.85rem !important;
+  font-size: 0.83rem !important;
+  border-radius: 999px !important;
+}
+
+/* Refined search bar */
+.list-tools input[type="search"],
+.admin-search input[type="search"] {
+  padding: 0.6rem 0.9rem !important;
+  font-size: 0.92rem !important;
+  border-radius: 8px !important;
+  background: var(--surface-2) !important;
+  border: 1.5px solid var(--border) !important;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.list-tools input[type="search"]:focus,
+.admin-search input[type="search"]:focus {
+  outline: none;
+  background: var(--surface) !important;
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 4px var(--primary-ring) !important;
+}
+
+/* Tighter category chips row */
+.chip-row,
+.filter-chips {
+  gap: 0.35rem !important;
+  margin: 0.75rem 0 !important;
+}
+
+.chip,
+.filter-chip {
+  padding: 0.32rem 0.78rem !important;
+  font-size: 0.78rem !important;
+  border-radius: 999px !important;
+}
+
+/* Refined table */
+table {
+  font-size: 0.88rem;
+}
+
+th {
+  font-size: 0.7rem !important;
+  letter-spacing: 0.04em !important;
+  font-weight: 700 !important;
+  color: var(--text-muted) !important;
+  padding: 0.55rem 0.65rem !important;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+td {
+  padding: 0.65rem 0.65rem !important;
+  vertical-align: middle;
+}
+
+tr:hover td {
+  background: rgba(8, 145, 178, 0.025);
+}
+
+tr.empty-row td {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 1.5rem !important;
+  font-style: italic;
+}
+
+/* Row action buttons spacing */
+.row-actions {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.row-actions .btn-sm {
+  padding: 0.32rem 0.7rem !important;
+  font-size: 0.78rem !important;
+}
+
+/* Refined pills */
+.cat-pill,
+.supplier-pill {
+  font-size: 0.7rem !important;
+  padding: 0.18rem 0.6rem !important;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* Subtle stock meta line under item name */
+.stock-meta {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 0.18rem;
+  letter-spacing: 0.01em;
+}
+
+.stock-name {
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.low-pill {
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid #fde68a;
+}
+
+/* Recent use cell — make use-pills look refined */
+.use-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.16rem 0.5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.74rem;
+  font-family: var(--font-mono);
+  color: var(--text);
+  margin-right: 0.2rem;
+}
+
+.use-pill .use-qty {
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 0 0.3rem;
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+/* Better date cells */
+.date-cell {
+  white-space: nowrap;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Button refinements */
+.btn {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.08s;
+}
+
+.btn:active {
+  transform: scale(0.985);
+}
+
+.btn-outline {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.btn-outline:hover {
+  background: var(--surface-2);
+  border-color: var(--text-muted);
+}
+
+.btn-secondary {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  background: var(--surface);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* Modal refinements */
+.modal {
+  border-radius: 14px !important;
+  padding: 1.3rem 1.4rem !important;
+  max-width: 540px !important;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25) !important;
+}
+
+.modal h3 {
+  font-size: 1.1rem !important;
+  letter-spacing: -0.01em !important;
+  margin: 0 0 0.5rem !important;
+}
+
+.modal-desc {
+  font-size: 0.86rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0 0 1rem;
+}
+
+/* Mobile: stack header actions, larger tap targets */
+@media (max-width: 640px) {
+  .summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .summary-box strong {
+    font-size: 1.3rem !important;
+  }
+  .bulk-actions {
+    width: 100%;
+  }
+  .bulk-actions .btn-sm {
+    flex: 1 1 calc(50% - 0.25rem);
+    text-align: center;
+    justify-content: center;
+  }
+  .bulk-actions .btn-primary {
+    flex: 1 1 100%;
+  }
+  .row-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* Tighter loading & toast */
+.toast {
+  border-radius: 10px;
+  font-size: 0.88rem;
+  padding: 0.75rem 1rem;
+}
