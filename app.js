@@ -29,10 +29,12 @@ let sims = [];
 let stockItems = [];
 let stockTransactions = [];
 let stockCategories = [];
+let suppliers = [];
 let simsTableReady = true;
 let stockItemsTableReady = true;
 let stockTxTableReady = true;
 let stockCategoriesTableReady = true;
+let suppliersTableReady = true;
 let isLoadingData = false;
 let lastSyncedAt = null;
 
@@ -92,6 +94,7 @@ async function consumeStockFor(identifiers, link) {
           await insertStockTransaction({
             stockItemId: it.id,
             installationId: link.installationId || null,
+            maintenanceRecordId: link.maintenanceRecordId || null,
             vehicleNo: link.vehicleNo || null,
             delta: -1,
             resultingQuantity: next,
@@ -105,6 +108,43 @@ async function consumeStockFor(identifiers, link) {
       }
     } catch (err) {
       console.warn("Auto-consume failed for stock item", it.name, err);
+    }
+  }
+}
+
+/**
+ * Reverse all consumption recorded against an installation or maintenance
+ * record. For each negative-delta transaction whose stock_item still exists,
+ * increment that item's quantity back and log a positive "restored" tx.
+ */
+async function restoreStockFor({ installationId, maintenanceRecordId, reason }) {
+  if (!stockItemsTableReady || !stockTxTableReady) return;
+  const txs = loadStockTransactions().filter((t) => {
+    if (maintenanceRecordId) return t.maintenanceRecordId === maintenanceRecordId && t.delta < 0;
+    if (installationId) return t.installationId === installationId && t.delta < 0;
+    return false;
+  });
+  for (const tx of txs) {
+    if (!tx.stockItemId) continue; // item was deleted; no row to restore on
+    const item = loadStockItems().find((i) => i.id === tx.stockItemId);
+    if (!item) continue;
+    const restoreQty = Math.abs(tx.delta);
+    const next = item.quantity + restoreQty;
+    try {
+      await updateStockItem({ ...item, quantity: next });
+      await insertStockTransaction({
+        stockItemId: item.id,
+        installationId: installationId || null,
+        maintenanceRecordId: maintenanceRecordId || null,
+        vehicleNo: tx.vehicleNo,
+        delta: +restoreQty,
+        resultingQuantity: next,
+        note: reason || "Restored after deletion",
+        createdBy: currentUser || "system",
+        itemNameSnapshot: item.name + (item.category ? ` (${item.category})` : ""),
+      });
+    } catch (err) {
+      console.warn("Stock restore failed for", item.name, err);
     }
   }
 }
@@ -664,6 +704,18 @@ async function refreshAllData() {
         throw err;
       }
     }
+    try {
+      suppliers = await withTimeout(fetchSuppliers(), 20000, "Fetch suppliers");
+      suppliersTableReady = true;
+    } catch (err) {
+      if (err.code === SUPPLIERS_TABLE_MISSING) {
+        console.warn("suppliers table missing — Supplier dropdown will be empty until migration runs.");
+        suppliers = [];
+        suppliersTableReady = false;
+      } else {
+        throw err;
+      }
+    }
     lastSyncedAt = new Date();
   } finally {
     isLoadingData = false;
@@ -689,6 +741,16 @@ function loadStockItems() {
 
 function loadStockTransactions() {
   return stockTransactions;
+}
+
+function loadSuppliers() {
+  return suppliers;
+}
+
+function getSupplierOptions() {
+  const fromDb = suppliers.map((s) => s.name);
+  const fromItems = stockItems.map((i) => i.supplier).filter(Boolean);
+  return Array.from(new Set([...fromDb, ...fromItems])).sort();
 }
 
 // Return recent transactions for one stock item, newest first.
@@ -1358,16 +1420,21 @@ function renderAkashHome() {
                 <th>Type</th>
                 <th>Vehicle</th>
                 <th>IMEI / Work</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               ${
                 [...myInstallations.map((inst) => ({
+                  id: inst.id,
+                  kind: "install",
                   date: inst.createdAt,
                   type: "Installation",
                   vehicle: inst.vehicleNo,
                   detail: getCurrentImei(inst),
                 })), ...myMaintenance.map((record) => ({
+                  id: record.id,
+                  kind: "repair",
                   date: record.createdAt,
                   type: "Repair",
                   vehicle: record.vehicleNo,
@@ -1381,9 +1448,13 @@ function renderAkashHome() {
                       <td><span class="badge ${entry.type === "Installation" ? "badge-ok" : "badge-repair"}">${escapeHtml(entry.type)}</span></td>
                       <td>${escapeHtml(entry.vehicle)}</td>
                       <td>${escapeHtml(entry.detail)}</td>
+                      <td class="row-actions">
+                        <button type="button" class="btn btn-outline btn-sm akash-edit" data-kind="${entry.kind}" data-id="${escapeHtml(entry.id)}">✎ Edit</button>
+                        <button type="button" class="btn btn-danger btn-sm akash-delete" data-kind="${entry.kind}" data-id="${escapeHtml(entry.id)}">Delete</button>
+                      </td>
                     </tr>
                   `)
-                  .join("") || `<tr class="empty-row"><td colspan="4">No entries from Akash yet.</td></tr>`
+                  .join("") || `<tr class="empty-row"><td colspan="5">No entries from Akash yet.</td></tr>`
               }
             </tbody>
           </table>
@@ -1400,6 +1471,241 @@ function renderAkashHome() {
     await refreshAllData();
     setView("akash-home");
   });
+  app.querySelectorAll(".akash-edit").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.kind === "install") openAkashEditInstallation(btn.dataset.id);
+      else openAkashEditRepair(btn.dataset.id);
+    });
+  });
+  app.querySelectorAll(".akash-delete").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.kind === "install") deleteAkashInstallation(btn.dataset.id);
+      else deleteAkashMaintenance(btn.dataset.id);
+    });
+  });
+}
+
+/* ---------------- Akash: edit + delete handlers ---------------- */
+
+function openAkashEditInstallation(installId) {
+  const inst = loadInstallations().find((i) => i.id === installId);
+  if (!inst) return;
+  modal.innerHTML = `
+    <h3>✎ Edit installation</h3>
+    <p class="modal-desc">You can fix typos in vehicle no, GPS model, MAC ID and sensor number. <strong>IMEI and SIM cannot be edited here</strong> — if you typed the wrong device or SIM, delete this entry and create a new one so stock is corrected automatically.</p>
+    <div class="field">
+      <label for="aiVehicle">Vehicle number</label>
+      <input type="text" id="aiVehicle" value="${escapeHtml(inst.vehicleNo)}" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label for="aiModel">GPS model</label>
+      <input type="text" id="aiModel" value="${escapeHtml(inst.gpsModel)}" autocomplete="off" />
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="aiMac">MAC ID</label>
+        <input type="text" id="aiMac" value="${escapeHtml(inst.macId || "")}" autocomplete="off" class="mono" />
+      </div>
+      <div class="field">
+        <label for="aiSensor">Sensor number</label>
+        <input type="text" id="aiSensor" value="${escapeHtml(inst.sensorNo || "")}" autocomplete="off" class="mono" />
+      </div>
+    </div>
+    <div class="field">
+      <label>IMEI (read-only)</label>
+      <input type="text" value="${escapeHtml(getCurrentImei(inst) || "")}" readonly class="mono" />
+    </div>
+    <div class="field">
+      <label>SIM (read-only)</label>
+      <input type="text" value="${escapeHtml(getCurrentSim(inst) || "")}" readonly class="mono" />
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" data-act="cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" data-act="save">Save changes</button>
+    </div>
+  `;
+  modalOverlay.classList.remove("hidden");
+  modalOverlay.onclick = (e) => {
+    if (e.target === modalOverlay) closeModal();
+  };
+  modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+  modal.querySelector('[data-act="save"]').onclick = async () => {
+    const vehicleNo = modal.querySelector("#aiVehicle").value.trim();
+    const gpsModel = modal.querySelector("#aiModel").value.trim();
+    const macId = modal.querySelector("#aiMac").value.trim();
+    const sensorNo = modal.querySelector("#aiSensor").value.trim();
+    if (!vehicleNo) {
+      showToast("Vehicle number cannot be empty.", true);
+      return;
+    }
+    closeModal();
+    renderLoading("Saving changes...");
+    try {
+      await updateInstallation({ ...inst, vehicleNo, gpsModel, macId, sensorNo });
+      await refreshAllData();
+      render();
+      showToast("Installation updated.");
+    } catch (err) {
+      await refreshAllData();
+      render();
+      showToast(err.message || "Save failed.", true);
+    }
+  };
+}
+
+function openAkashEditRepair(recordId) {
+  const record = loadMaintenance().find((r) => r.id === recordId);
+  if (!record) return;
+  modal.innerHTML = `
+    <h3>✎ Edit repair entry</h3>
+    <p class="modal-desc">You can update the "other work" comment only. Identifier changes (SIM / IMEI) require deleting this entry and creating a new repair so stock is corrected.</p>
+    <div class="field">
+      <label>Vehicle (read-only)</label>
+      <input type="text" value="${escapeHtml(record.vehicleNo)}" readonly />
+    </div>
+    <div class="field">
+      <label>Work done (read-only)</label>
+      <input type="text" value="${escapeHtml(workLabels(record))}" readonly />
+    </div>
+    <div class="field">
+      <label for="arOther">Other work / comment</label>
+      <input type="text" id="arOther" value="${escapeHtml(record.otherWorkText || "")}" placeholder="e.g. bracket changed, wiring re-done..." />
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" data-act="cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" data-act="save">Save changes</button>
+    </div>
+  `;
+  modalOverlay.classList.remove("hidden");
+  modalOverlay.onclick = (e) => {
+    if (e.target === modalOverlay) closeModal();
+  };
+  modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+  modal.querySelector('[data-act="save"]').onclick = async () => {
+    const otherWorkText = modal.querySelector("#arOther").value.trim() || null;
+    closeModal();
+    renderLoading("Saving changes...");
+    try {
+      await updateMaintenanceRecord({ ...record, otherWorkText });
+      await refreshAllData();
+      render();
+      showToast("Repair entry updated.");
+    } catch (err) {
+      await refreshAllData();
+      render();
+      showToast(err.message || "Save failed.", true);
+    }
+  };
+}
+
+async function deleteAkashInstallation(installId) {
+  const inst = loadInstallations().find((i) => i.id === installId);
+  if (!inst) return;
+  const linkedRepairs = loadMaintenance().filter((r) => r.installationId === installId);
+  const ok = await showConfirm({
+    title: "Delete this installation?",
+    message: `Remove the installation for ${inst.vehicleNo}? ${linkedRepairs.length ? `This will also remove ${linkedRepairs.length} repair record${linkedRepairs.length === 1 ? "" : "s"} linked to it. ` : ""}Any stock that was consumed (IMEI / SIM / sensor) will be automatically restored to inventory.`,
+    confirmLabel: "Delete",
+    danger: true,
+  });
+  if (!ok) return;
+  renderLoading("Deleting installation & restoring stock...");
+  try {
+    // Restore stock for each linked maintenance first.
+    for (const r of linkedRepairs) {
+      await restoreStockFor({
+        maintenanceRecordId: r.id,
+        reason: `Restored — installation for ${inst.vehicleNo} deleted`,
+      });
+      await deleteMaintenanceRecord(r.id);
+    }
+    // Then restore stock for the installation itself.
+    await restoreStockFor({
+      installationId: installId,
+      reason: `Restored — installation for ${inst.vehicleNo} deleted`,
+    });
+    await deleteInstallation(installId);
+    await refreshAllData();
+    render();
+    showToast("Installation deleted, stock restored.");
+  } catch (err) {
+    await refreshAllData();
+    render();
+    showToast(err.message || "Delete failed.", true);
+  }
+}
+
+async function deleteAkashMaintenance(recordId) {
+  const record = loadMaintenance().find((r) => r.id === recordId);
+  if (!record) return;
+  const ok = await showConfirm({
+    title: "Delete this repair entry?",
+    message: `Remove repair on ${record.vehicleNo} (${workLabels(record)})? Stock that was consumed will be restored, and any SIM/device history added by this repair will be reverted.`,
+    confirmLabel: "Delete",
+    danger: true,
+  });
+  if (!ok) return;
+  renderLoading("Deleting repair & restoring state...");
+  try {
+    // 1) Reverse stock consumption for this repair.
+    await restoreStockFor({
+      maintenanceRecordId: recordId,
+      reason: `Restored — repair on ${record.vehicleNo} deleted`,
+    });
+    // 2) Revert simHistory / imeiHistory on the linked installation.
+    const inst = loadInstallations().find((i) => i.id === record.installationId);
+    if (inst) {
+      let touched = false;
+      if (record.simChange && record.newSimNo) {
+        const idx = inst.simHistory.findIndex(
+          (h) => h.value === record.newSimNo && h.active
+        );
+        if (idx >= 0) {
+          inst.simHistory.splice(idx, 1);
+          // Restore the previous active sim (the one this repair marked pendingDeactivation).
+          for (let i = inst.simHistory.length - 1; i >= 0; i -= 1) {
+            if (inst.simHistory[i].pendingDeactivation) {
+              inst.simHistory[i].pendingDeactivation = false;
+              inst.simHistory[i].active = true;
+              break;
+            }
+            if (inst.simHistory[i].value === record.oldSimNo) {
+              inst.simHistory[i].active = true;
+              inst.simHistory[i].pendingDeactivation = false;
+              break;
+            }
+          }
+          touched = true;
+        }
+      }
+      if (record.deviceChange && record.newImei) {
+        const idx = inst.imeiHistory.findIndex(
+          (h) => h.value === record.newImei && h.active
+        );
+        if (idx >= 0) {
+          inst.imeiHistory.splice(idx, 1);
+          // Re-activate the previous IMEI.
+          for (let i = inst.imeiHistory.length - 1; i >= 0; i -= 1) {
+            inst.imeiHistory[i].active = true;
+            break;
+          }
+          touched = true;
+        }
+      }
+      if (touched) {
+        await updateInstallation(inst);
+      }
+    }
+    // 3) Delete the maintenance record.
+    await deleteMaintenanceRecord(recordId);
+    await refreshAllData();
+    render();
+    showToast("Repair deleted, state restored.");
+  } catch (err) {
+    await refreshAllData();
+    render();
+    showToast(err.message || "Delete failed.", true);
+  }
 }
 
 function renderInstallForm() {
@@ -1842,7 +2148,7 @@ function renderRepairForm() {
 
     try {
       await updateInstallation(updatedInst);
-      await insertMaintenanceRecord(newRecord);
+      const savedRecord = await insertMaintenanceRecord(newRecord);
       // Auto-consume newly-used stock entries.
       await consumeStockFor(
         {
@@ -1851,6 +2157,7 @@ function renderRepairForm() {
         },
         {
           installationId: inst.id,
+          maintenanceRecordId: savedRecord?.id || newRecord.id,
           vehicleNo: inst.vehicleNo,
           note: "Used during repair",
         }
@@ -3565,6 +3872,7 @@ function renderStockPage() {
                 ${item.notes ? `<div class="stock-notes">${escapeHtml(item.notes.split("\n")[0])}</div>` : ""}
               </td>
               <td>${item.category ? `<span class="cat-pill">${escapeHtml(item.category)}</span>` : `<span class="muted">—</span>`}</td>
+              <td>${item.supplier ? `<span class="supplier-pill">${escapeHtml(item.supplier)}</span>` : `<span class="muted">—</span>`}</td>
               <td class="mono qty-cell">${fmtQty(item.quantity)}</td>
               <td class="mono">${escapeHtml(item.unit)}</td>
               <td class="recent-use">${recentHtml}</td>
@@ -3576,7 +3884,7 @@ function renderStockPage() {
             </tr>`;
         })
         .join("")
-    : `<tr class="empty-row"><td colspan="7">${q || stockCategoryFilter !== "all" ? "No items match the filters." : "No items in stock yet. Click + Add Item to start."}</td></tr>`;
+    : `<tr class="empty-row"><td colspan="8">${q || stockCategoryFilter !== "all" ? "No items match the filters." : "No items in stock yet. Click + Add Item to start."}</td></tr>`;
 
   app.innerHTML = `
     ${renderHeader("Stock Inventory", "Equipment, spares, and consumables")}
@@ -3595,6 +3903,7 @@ function renderStockPage() {
           </div>
           <div class="bulk-actions">
             <button type="button" class="btn btn-secondary btn-sm" id="manageCatsBtn">⚙️ Manage categories</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="manageSuppliersBtn">🏷️ Manage suppliers</button>
             <button type="button" class="btn btn-primary btn-sm" id="addStockBtn">+ Add Item</button>
           </div>
         </div>
@@ -3608,6 +3917,7 @@ function renderStockPage() {
               <tr>
                 <th>Item</th>
                 <th>Category</th>
+                <th>Supplier</th>
                 <th class="num-th">Qty</th>
                 <th>Unit</th>
                 <th>Recent use</th>
@@ -3647,6 +3957,7 @@ function renderStockPage() {
     openStockEditor(null, allCategoryOptions)
   );
   document.getElementById("manageCatsBtn")?.addEventListener("click", openCategoryManager);
+  document.getElementById("manageSuppliersBtn")?.addEventListener("click", openSupplierManager);
   app.querySelectorAll(".stock-edit").forEach((btn) => {
     btn.addEventListener("click", () => openStockEditor(btn.dataset.id, allCategoryOptions));
   });
@@ -3748,6 +4059,13 @@ function openStockEditor(itemId, categoryOptions) {
         <label for="stkLow">Low-stock alert at</label>
         <input type="number" id="stkLow" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="5" value="${item?.lowStockThreshold ?? 5}" class="mono" />
       </div>
+    </div>
+    <div class="field">
+      <label for="stkSupplier">Supplier</label>
+      <input type="text" id="stkSupplier" autocomplete="off" list="stockSupplierList" placeholder="Pick from list or type a new supplier..." value="${escapeHtml(item?.supplier || "")}" />
+      <datalist id="stockSupplierList">
+        ${getSupplierOptions().map((s) => `<option value="${escapeHtml(s)}">`).join("")}
+      </datalist>
     </div>
     <div class="field">
       <label for="stkNotes">Notes (optional)</label>
@@ -3945,6 +4263,7 @@ function openStockEditor(itemId, categoryOptions) {
     const costRaw = modal.querySelector("#stkCost").value;
     const lowRaw = modal.querySelector("#stkLow").value;
     const notes = modal.querySelector("#stkNotes").value.trim() || null;
+    const supplier = modal.querySelector("#stkSupplier")?.value.trim() || null;
 
     if (!name) {
       showToast("Item name is required.", true);
@@ -4055,6 +4374,7 @@ function openStockEditor(itemId, categoryOptions) {
         costPerUnit: costRaw === "" ? null : Number(costRaw),
         lowStockThreshold: lowRaw === "" ? null : Number(lowRaw),
         notes,
+        supplier,
         metadata,
       };
       if (item) {
@@ -4459,6 +4779,90 @@ function openCategoryManager() {
     if (e.key === "Enter") {
       e.preventDefault();
       addNewCategory();
+    }
+  });
+}
+
+function openSupplierManager() {
+  const sups = loadSuppliers();
+  const itemsBySupplier = new Map();
+  for (const it of loadStockItems()) {
+    if (!it.supplier) continue;
+    itemsBySupplier.set(it.supplier, (itemsBySupplier.get(it.supplier) || 0) + 1);
+  }
+  function rowHtml(sup) {
+    const inUse = itemsBySupplier.get(sup.name) || 0;
+    return `
+      <div class="cat-row">
+        <span class="supplier-pill">${escapeHtml(sup.name)}</span>
+        <span class="cat-usage">${inUse > 0 ? `${inUse} item${inUse === 1 ? "" : "s"}` : "not in use"}</span>
+        <button type="button" class="btn btn-danger btn-sm sup-delete" data-id="${escapeHtml(sup.id)}" ${inUse > 0 ? "disabled" : ""} title="${inUse > 0 ? "Items use this supplier — clear them first" : "Delete this supplier"}">Delete</button>
+      </div>`;
+  }
+  modal.innerHTML = `
+    <h3>🏷️ Manage suppliers</h3>
+    <p class="modal-desc">Add suppliers or remove ones you don't use. Suppliers that have items can't be deleted until those items are reassigned.</p>
+    <div class="cat-add-row">
+      <input type="text" id="newSupName" autocomplete="off" placeholder="Supplier name (e.g. ABC Telecom)" />
+      <button type="button" class="btn btn-primary btn-sm" id="addSupBtn">+ Add</button>
+    </div>
+    <div class="cat-list">
+      ${sups.length ? sups.map(rowHtml).join("") : `<p class="muted">No suppliers yet. Add one above.</p>`}
+    </div>
+    <div class="modal-actions" style="margin-top: 1rem;">
+      <button type="button" class="btn btn-secondary" data-act="cancel">Close</button>
+    </div>
+  `;
+  modalOverlay.classList.remove("hidden");
+  modalOverlay.onclick = (e) => {
+    if (e.target === modalOverlay) closeModal();
+  };
+  modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+
+  modal.querySelectorAll(".sup-delete").forEach((btn) => {
+    if (btn.disabled) return;
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      const sup = suppliers.find((s) => s.id === id);
+      if (!sup) return;
+      const ok = await showConfirm({
+        title: "Delete supplier?",
+        message: `Remove "${sup.name}" from the supplier list?`,
+        confirmLabel: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await deleteSupplier(id);
+        await refreshAllData();
+        closeModal();
+        openSupplierManager();
+      } catch (err) {
+        showToast(err.message || "Delete failed.", true);
+      }
+    });
+  });
+
+  async function addNewSupplier() {
+    const name = modal.querySelector("#newSupName").value.trim();
+    if (!name) {
+      showToast("Type a supplier name first.", true);
+      return;
+    }
+    try {
+      await insertSupplier(name);
+      await refreshAllData();
+      closeModal();
+      openSupplierManager();
+    } catch (err) {
+      showToast(err.message || "Add failed.", true);
+    }
+  }
+  modal.querySelector("#addSupBtn").onclick = addNewSupplier;
+  modal.querySelector("#newSupName").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addNewSupplier();
     }
   });
 }
