@@ -349,6 +349,7 @@ function rowToStockItem(row) {
     costPerUnit: row.cost_per_unit != null ? Number(row.cost_per_unit) : null,
     lowStockThreshold: row.low_stock_threshold != null ? Number(row.low_stock_threshold) : null,
     notes: row.notes || null,
+    supplier: row.supplier || null,
     metadata: row.metadata && typeof row.metadata === "object" ? row.metadata : {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -365,6 +366,7 @@ function stockItemToRow(item) {
     cost_per_unit: num(item.costPerUnit),
     low_stock_threshold: num(item.lowStockThreshold),
     notes: item.notes || null,
+    supplier: item.supplier ? String(item.supplier).trim() || null : null,
     metadata: item.metadata && typeof item.metadata === "object" ? item.metadata : {},
   };
 }
@@ -450,6 +452,7 @@ function rowToStockTx(row) {
     id: row.id,
     stockItemId: row.stock_item_id || null,
     installationId: row.installation_id || null,
+    maintenanceRecordId: row.maintenance_record_id || null,
     vehicleNo: row.vehicle_no || null,
     delta: Number(row.delta || 0),
     resultingQuantity: row.resulting_quantity != null ? Number(row.resulting_quantity) : null,
@@ -499,6 +502,7 @@ async function insertStockTransaction(tx) {
     .insert({
       stock_item_id: tx.stockItemId || null,
       installation_id: tx.installationId || null,
+      maintenance_record_id: tx.maintenanceRecordId || null,
       vehicle_no: tx.vehicleNo || null,
       delta: Number(tx.delta),
       resulting_quantity: tx.resultingQuantity != null ? Number(tx.resultingQuantity) : null,
@@ -518,6 +522,93 @@ async function insertStockTransaction(tx) {
     throw new Error(error.message);
   }
   return rowToStockTx(data);
+}
+
+/* ============================================================
+   SUPPLIERS TABLE
+   Admin-managed list of suppliers used in the Stock page.
+   ============================================================ */
+
+function rowToSupplier(row) {
+  return { id: row.id, name: row.name, createdAt: row.created_at };
+}
+
+const SUPPLIERS_TABLE_MISSING = "SUPPLIERS_TABLE_MISSING";
+
+function isMissingSuppliersTableError(err) {
+  if (!err) return false;
+  const msg = (err.message || "").toLowerCase();
+  return (
+    err.code === "42P01" ||
+    err.code === "PGRST205" ||
+    err.code === "PGRST116" ||
+    (msg.includes("relation") && msg.includes("suppliers") && msg.includes("does not exist")) ||
+    (msg.includes("could not find") && msg.includes("suppliers") && msg.includes("schema")) ||
+    (msg.includes("schema cache") && msg.includes("suppliers"))
+  );
+}
+
+async function fetchSuppliers() {
+  const { data, error } = await getDb()
+    .from("suppliers")
+    .select("*")
+    .order("name", { ascending: true });
+  if (error) {
+    if (isMissingSuppliersTableError(error)) {
+      const e = new Error("suppliers table missing — please run suppliers-and-extras-migration.sql in Supabase");
+      e.code = SUPPLIERS_TABLE_MISSING;
+      throw e;
+    }
+    throw new Error(error.message);
+  }
+  return (data || []).map(rowToSupplier);
+}
+
+async function insertSupplier(name) {
+  const trimmed = String(name).trim();
+  if (!trimmed) throw new Error("Supplier name cannot be empty.");
+  const { data, error } = await getDb()
+    .from("suppliers")
+    .insert({ name: trimmed })
+    .select()
+    .single();
+  if (error) {
+    if ((error.message || "").toLowerCase().includes("duplicate")) {
+      throw new Error(`Supplier "${trimmed}" already exists.`);
+    }
+    throw new Error(error.message);
+  }
+  return rowToSupplier(data);
+}
+
+async function deleteSupplier(id) {
+  const { error } = await getDb().from("suppliers").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  return true;
+}
+
+/* ============================================================
+   INSTALLATION & MAINTENANCE DELETE
+   Hard-delete an installation or repair entry. Auto-consume
+   reversal is handled in app.js (consumeStockReverse).
+   ============================================================ */
+
+async function deleteInstallation(installationId) {
+  const { error } = await getDb()
+    .from("installations")
+    .delete()
+    .eq("id", installationId);
+  if (error) throw new Error(error.message);
+  return true;
+}
+
+async function deleteMaintenanceRecord(recordId) {
+  const { error } = await getDb()
+    .from("maintenance_records")
+    .delete()
+    .eq("id", recordId);
+  if (error) throw new Error(error.message);
+  return true;
 }
 
 /* ============================================================
@@ -624,6 +715,11 @@ function subscribeRealtime(onChange) {
       "postgres_changes",
       { event: "*", schema: "public", table: "stock_categories" },
       (payload) => onChange("data", { table: "stock_categories", payload })
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "suppliers" },
+      (payload) => onChange("data", { table: "suppliers", payload })
     )
     .subscribe((status) => onChange("status", { status }));
   return channel;
