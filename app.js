@@ -715,6 +715,70 @@ function getRecentVehiclesForItem(stockItemId, n = 3) {
   return result;
 }
 
+// Find installations currently using a stock item's identifier (live cross-ref).
+// Useful so the Stock page shows "Used in VEHICLE-X" even if the item was
+// added to stock AFTER the installation happened (no transaction record).
+function getInstallationUsesForItem(item) {
+  if (!item || !item.metadata) return [];
+  const kind = categoryKind(item.category);
+  const m = item.metadata;
+  const out = [];
+
+  for (const inst of loadInstallations()) {
+    let matched = false;
+    if (kind === "gps" && m.imei) {
+      const v = String(m.imei).toLowerCase();
+      const curImei = (getCurrentImei(inst) || "").toLowerCase();
+      if (curImei === v) {
+        matched = true;
+      } else if (inst.imeiHistory.some((h) => (h.value || "").toLowerCase() === v)) {
+        matched = true;
+      }
+    } else if (kind === "sim" && (m.secondary || m.primary)) {
+      const sec = (m.secondary || "").toLowerCase();
+      const pri = (m.primary || "").toLowerCase();
+      for (const h of inst.simHistory) {
+        const v = (h.value || "").toLowerCase();
+        const sv = (h.secondaryValue || "").toLowerCase();
+        if ((sec && (v === sec || sv === sec)) || (pri && v === pri)) {
+          matched = true;
+          break;
+        }
+      }
+    } else if (kind === "sensor" && (m.sensorNo || m.macId)) {
+      const sn = (m.sensorNo || "").toLowerCase();
+      const mac = (m.macId || "").toLowerCase();
+      if (
+        (sn && (inst.sensorNo || "").toLowerCase() === sn) ||
+        (mac && (inst.macId || "").toLowerCase() === mac)
+      ) {
+        matched = true;
+      }
+    }
+    if (matched) out.push({ vehicleNo: inst.vehicleNo });
+  }
+  return out;
+}
+
+// Merge live installation uses + recent transaction uses, deduped.
+function getStockUses(item, n = 3) {
+  const seen = new Set();
+  const result = [];
+  for (const u of getInstallationUsesForItem(item)) {
+    if (seen.has(u.vehicleNo)) continue;
+    seen.add(u.vehicleNo);
+    result.push({ vehicleNo: u.vehicleNo, source: "install" });
+    if (result.length >= n) return result;
+  }
+  for (const u of getRecentVehiclesForItem(item.id, n)) {
+    if (seen.has(u.vehicleNo)) continue;
+    seen.add(u.vehicleNo);
+    result.push({ vehicleNo: u.vehicleNo, source: "tx", delta: u.delta, at: u.at });
+    if (result.length >= n) return result;
+  }
+  return result;
+}
+
 /* Find a SIM by either primary or secondary number. */
 function findSimByValue(value) {
   if (!value) return null;
@@ -3481,13 +3545,15 @@ function renderStockPage() {
         .map((item) => {
           const low = isLow(item);
           const value = item.costPerUnit != null ? item.quantity * item.costPerUnit : null;
-          const recent = getRecentVehiclesForItem(item.id, 3);
-          const recentHtml = recent.length
-            ? recent
-                .map(
-                  (r) =>
-                    `<span class="use-pill" title="${escapeHtml(String(-r.delta) + " " + item.unit + " on " + formatDateTime(r.at))}">${escapeHtml(r.vehicleNo)}<span class="use-qty">${r.delta}</span></span>`
-                )
+          const uses = getStockUses(item, 3);
+          const recentHtml = uses.length
+            ? uses
+                .map((u) => {
+                  if (u.source === "install") {
+                    return `<span class="use-pill" title="Currently in installation">${escapeHtml(u.vehicleNo)}<span class="use-qty in-use">in use</span></span>`;
+                  }
+                  return `<span class="use-pill" title="${escapeHtml(String(-u.delta) + " " + item.unit + " on " + formatDateTime(u.at))}">${escapeHtml(u.vehicleNo)}<span class="use-qty">${u.delta}</span></span>`;
+                })
                 .join(" ")
             : `<span class="muted">—</span>`;
           const metaSummary = stockMetadataSummary(item);
@@ -3628,13 +3694,12 @@ function openStockEditor(itemId, categoryOptions) {
         </datalist>
       </div>
       <div class="field">
-        <label for="stkUnit">Unit</label>
-        <input type="text" id="stkUnit" autocomplete="off" list="stockUnitList" placeholder="pcs" value="${escapeHtml(item?.unit || "pcs")}" />
-        <datalist id="stockUnitList">
-          ${STOCK_UNITS.map((u) => `<option value="${u}">`).join("")}
-        </datalist>
+        <label for="stkQty">Quantity <span class="required">*</span></label>
+        <input type="number" id="stkQty" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="1" value="${item ? item.quantity : 1}" class="mono" />
       </div>
     </div>
+    <!-- Hidden unit field (always pcs unless edited) -->
+    <input type="hidden" id="stkUnit" value="${escapeHtml(item?.unit || "pcs")}" />
 
     <!-- Conditional fields based on category -->
     <div id="metaGps" class="meta-block hidden">
@@ -3676,16 +3741,12 @@ function openStockEditor(itemId, categoryOptions) {
 
     <div class="field-row">
       <div class="field">
-        <label for="stkQty">Quantity <span class="required">*</span></label>
-        <input type="number" id="stkQty" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="1" value="${item ? item.quantity : 1}" class="mono" />
-      </div>
-      <div class="field">
         <label for="stkCost">Cost per unit (₹)</label>
         <input type="number" id="stkCost" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="optional" value="${item?.costPerUnit ?? ""}" class="mono" />
       </div>
       <div class="field">
         <label for="stkLow">Low-stock alert at</label>
-        <input type="number" id="stkLow" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="optional" value="${item?.lowStockThreshold ?? ""}" class="mono" />
+        <input type="number" id="stkLow" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="5" value="${item?.lowStockThreshold ?? 5}" class="mono" />
       </div>
     </div>
     <div class="field">
@@ -3910,6 +3971,14 @@ function openStockEditor(itemId, categoryOptions) {
         showToast("IMEI number is required for GPS items.", true);
         return;
       }
+      // Duplicate check
+      const dup = loadStockItems().find(
+        (i) => i.id !== item?.id && (i.metadata?.imei || "").toLowerCase() === imei.toLowerCase()
+      );
+      if (dup) {
+        showToast(`IMEI ${imei} already exists in stock (${dup.name}). Edit that item instead.`, true);
+        return;
+      }
       metadata.imei = imei;
     } else if (kind === "sim") {
       simPrimary = modal.querySelector("#metaSimPrimary").value.trim();
@@ -3917,6 +3986,34 @@ function openStockEditor(itemId, categoryOptions) {
       if (!simSecondary) {
         showToast("Secondary / ICCID is required for SIM items.", true);
         return;
+      }
+      // Duplicate check by secondary (the unique permanent ID)
+      const dupSec = loadStockItems().find(
+        (i) =>
+          i.id !== item?.id &&
+          (i.metadata?.secondary || "").toLowerCase() === simSecondary.toLowerCase()
+      );
+      if (dupSec) {
+        showToast(
+          `ICCID ${simSecondary} already exists in stock (${dupSec.name}). Edit that item instead.`,
+          true
+        );
+        return;
+      }
+      // Also reject if the entered primary number is already used by another stock SIM
+      if (simPrimary) {
+        const dupPri = loadStockItems().find(
+          (i) =>
+            i.id !== item?.id &&
+            (i.metadata?.primary || "").toLowerCase() === simPrimary.toLowerCase()
+        );
+        if (dupPri) {
+          showToast(
+            `Primary number ${simPrimary} already exists in stock (${dupPri.name}). Each primary must be unique.`,
+            true
+          );
+          return;
+        }
       }
       metadata.primary = simPrimary || null;
       metadata.secondary = simSecondary;
@@ -3929,6 +4026,17 @@ function openStockEditor(itemId, categoryOptions) {
       }
       if (!macId) {
         showToast("MAC ID is required.", true);
+        return;
+      }
+      // Duplicate check (sensor no OR mac id matches another item)
+      const dup = loadStockItems().find(
+        (i) =>
+          i.id !== item?.id &&
+          ((sensorNo && (i.metadata?.sensorNo || "").toLowerCase() === sensorNo.toLowerCase()) ||
+            (macId && (i.metadata?.macId || "").toLowerCase() === macId.toLowerCase()))
+      );
+      if (dup) {
+        showToast(`Sensor with this number/MAC already exists in stock (${dup.name}).`, true);
         return;
       }
       metadata.sensorNo = sensorNo;
