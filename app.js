@@ -946,6 +946,40 @@ function findSimByPrimary(primary) {
   return sims.find((s) => (s.primaryNumber || "").toLowerCase() === v) || null;
 }
 
+/* ============================================================
+   SIM number validation & swap detection.
+   - Primary number: typically 10–13 digits
+   - Secondary / ICCID: 18–20 digits, usually starts with "89"
+   Used to warn / auto-fix when the two fields look swapped.
+   ============================================================ */
+
+function digitsOnly(s) {
+  return String(s || "").replace(/\D/g, "");
+}
+
+function isLikelyIccid(s) {
+  const d = digitsOnly(s);
+  return d.length >= 18 && d.length <= 22;
+}
+
+function isLikelyPrimary(s) {
+  const d = digitsOnly(s);
+  return d.length >= 10 && d.length <= 14;
+}
+
+/**
+ * Returns true if (primary, secondary) appears to be entered in the
+ * wrong order — a 20-digit ICCID in the primary slot, and a short
+ * 10–13 digit number in the secondary slot.
+ */
+function pairLooksSwapped(primary, secondary) {
+  return isLikelyIccid(primary) && isLikelyPrimary(secondary);
+}
+
+function simLooksSwapped(sim) {
+  return pairLooksSwapped(sim.primaryNumber, sim.secondaryNumber);
+}
+
 function generateId() {
   if (crypto.randomUUID) return crypto.randomUUID();
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -2317,17 +2351,37 @@ async function importSimsFromExcel(file) {
     showToast("Upload file is empty.", true);
     return;
   }
-  let saved = 0;
-  const errors = [];
-  for (const [index, row] of rows.entries()) {
-    const rowNo = index + 2;
+  // Pre-scan to detect swap candidates so we can ask the admin once
+  // upfront rather than row-by-row.
+  let swapCandidates = 0;
+  const parsed = rows.map((row) => {
     const secondary = String(
       row.secondary_number || row.secondary || row.iccid || row.secondary_sim || ""
     ).trim();
     const primary = String(
       row.primary_number || row.primary || row.primary_sim || ""
     ).trim();
-    const notes = String(row.notes || "").trim() || null;
+    if (pairLooksSwapped(primary, secondary)) swapCandidates += 1;
+    return { primary, secondary, notes: String(row.notes || "").trim() || null };
+  });
+  let autoSwap = false;
+  if (swapCandidates > 0) {
+    autoSwap = await showConfirm({
+      title: "Some rows look swapped",
+      message: `${swapCandidates} of ${rows.length} Excel rows have a 20-digit ICCID in the <strong>primary_number</strong> column and a short number in the <strong>secondary_number</strong> column. Auto-swap them before saving?`,
+      confirmLabel: "Yes, swap & save",
+    });
+  }
+  let saved = 0;
+  const errors = [];
+  for (const [index, row] of parsed.entries()) {
+    const rowNo = index + 2;
+    let { primary, secondary, notes } = row;
+    if (autoSwap && pairLooksSwapped(primary, secondary)) {
+      const tmp = primary;
+      primary = secondary;
+      secondary = tmp;
+    }
     if (!secondary) {
       errors.push(`Row ${rowNo}: secondary_number is required`);
       continue;
@@ -3433,6 +3487,19 @@ function renderSimUpload() {
     if (!ok) return;
 
     const total = primaries.length;
+    // Detect rows that look swapped (ICCID in primary box, short number in secondary box).
+    const swapCandidates = primaries.reduce(
+      (acc, p, i) => acc + (pairLooksSwapped(p, secondaries[i] || "") ? 1 : 0),
+      0
+    );
+    let autoSwap = false;
+    if (swapCandidates > 0) {
+      autoSwap = await showConfirm({
+        title: "Some rows look swapped",
+        message: `${swapCandidates} of ${total} rows have a 20-digit ICCID in the <strong>primary</strong> box and a short number in the <strong>secondary</strong> box. Auto-swap them before saving?`,
+        confirmLabel: "Yes, swap & save",
+      });
+    }
     renderLoading(`Saving SIMs to database... 0/${total}`);
     let saved = 0;
     const errors = [];
@@ -3447,8 +3514,13 @@ function renderSimUpload() {
 
     try {
       for (let i = 0; i < total; i += 1) {
-        const primary = primaries[i];
-        const secondary = secondaries[i];
+        let primary = primaries[i];
+        let secondary = secondaries[i];
+        if (autoSwap && pairLooksSwapped(primary, secondary)) {
+          const tmp = primary;
+          primary = secondary;
+          secondary = tmp;
+        }
         const rowNo = i + 1;
         if (!secondary) {
           errors.push(`Row ${rowNo}: secondary (ICCID) blank — skipped`);
@@ -3612,19 +3684,26 @@ function renderSimDb() {
   const inUseCount = allSims.filter((s) => findUsingInstallation(s)).length;
   const availableCount = totalSims - inUseCount - pendingPrimary;
 
+  const swappedCount = allSims.filter(simLooksSwapped).length;
+
   const tableHtml = matches.length
     ? matches
         .map((sim) => {
           const status = simStatus(sim);
+          const isSwapped = simLooksSwapped(sim);
           const primary = sim.primaryNumber || `<span class="muted">Not set</span>`;
           return `
-            <tr>
-              <td class="mono">${typeof primary === "string" && primary.startsWith("<") ? primary : escapeHtml(primary)}</td>
+            <tr class="${isSwapped ? "row-swap-warn" : ""}">
+              <td class="mono">
+                ${typeof primary === "string" && primary.startsWith("<") ? primary : escapeHtml(primary)}
+                ${isSwapped ? `<span class="swap-tag" title="This looks like a 20-digit ICCID in the primary slot. Use the Fix button to swap.">looks swapped</span>` : ""}
+              </td>
               <td class="mono">${escapeHtml(sim.secondaryNumber)}</td>
               <td><span class="sim-status ${status.className}">${escapeHtml(status.label)}</span></td>
               <td>${escapeHtml(sim.notes || "")}</td>
               <td class="date-cell">${escapeHtml(formatDateTime(sim.createdAt))}</td>
               <td class="row-actions">
+                ${isSwapped ? `<button type="button" class="btn btn-warn btn-sm sim-row-fix" data-id="${sim.id}" title="Swap primary ↔ secondary">↔ Fix swap</button>` : ""}
                 <button type="button" class="btn btn-outline btn-sm sim-row-edit" data-id="${sim.id}">✎ Edit</button>
                 <button type="button" class="btn btn-danger btn-sm sim-row-delete" data-id="${sim.id}">Delete</button>
               </td>
@@ -3642,7 +3721,14 @@ function renderSimDb() {
         <div class="summary-box"><strong>${inUseCount}</strong><span>In use</span></div>
         <div class="summary-box"><strong>${availableCount}</strong><span>Available</span></div>
         <div class="summary-box ${pendingPrimary ? "summary-warn" : ""}"><strong>${pendingPrimary}</strong><span>Pending primary</span></div>
+        ${swappedCount ? `<div class="summary-box summary-danger"><strong>${swappedCount}</strong><span>Looks swapped</span></div>` : ""}
       </div>
+      ${swappedCount ? `
+        <div class="swap-banner">
+          <span>⚠️ <strong>${swappedCount}</strong> SIM${swappedCount === 1 ? "" : "s"} appear to have primary &amp; secondary numbers swapped (20-digit ICCID in primary slot, short number in secondary).</span>
+          <button type="button" class="btn btn-warn btn-sm" id="fixAllSwap">↔ Auto-fix all</button>
+        </div>
+      ` : ""}
       <section class="card">
         <div class="section-heading">
           <div>
@@ -3694,6 +3780,71 @@ function renderSimDb() {
   app.querySelectorAll(".sim-row-delete").forEach((btn) => {
     btn.addEventListener("click", () => onDeleteSim(btn.dataset.id));
   });
+  app.querySelectorAll(".sim-row-fix").forEach((btn) => {
+    btn.addEventListener("click", () => onFixSwappedSim(btn.dataset.id));
+  });
+  document.getElementById("fixAllSwap")?.addEventListener("click", onFixAllSwappedSims);
+}
+
+async function onFixSwappedSim(simId) {
+  const sim = loadSims().find((s) => s.id === simId);
+  if (!sim) return;
+  const ok = await showConfirm({
+    title: "Swap primary ↔ secondary?",
+    message: `Move <strong>${escapeHtml(sim.primaryNumber || "")}</strong> to the secondary slot and <strong>${escapeHtml(sim.secondaryNumber || "")}</strong> to the primary slot?`,
+    confirmLabel: "Swap",
+  });
+  if (!ok) return;
+  renderLoading("Swapping numbers...");
+  try {
+    // We can't just swap because secondary_number is the unique key. Easiest
+    // safe path: delete the row, then re-insert with the swapped values.
+    await deleteSim(simId);
+    await upsertSim({
+      primaryNumber: sim.secondaryNumber || null,
+      secondaryNumber: sim.primaryNumber || "",
+      notes: sim.notes,
+    });
+    await refreshAllData();
+    render();
+    showToast("Swapped.");
+  } catch (err) {
+    await refreshAllData();
+    render();
+    showToast(err.message || "Swap failed.", true);
+  }
+}
+
+async function onFixAllSwappedSims() {
+  const targets = loadSims().filter(simLooksSwapped);
+  if (!targets.length) {
+    showToast("Nothing to fix.");
+    return;
+  }
+  const ok = await showConfirm({
+    title: `Auto-fix ${targets.length} SIM${targets.length === 1 ? "" : "s"}?`,
+    message: `Swap primary ↔ secondary for all SIMs where the primary slot looks like a 20-digit ICCID. This cannot be undone in one click — but each row can be edited manually afterwards.`,
+    confirmLabel: "Fix all",
+  });
+  if (!ok) return;
+  renderLoading(`Fixing ${targets.length} SIMs...`);
+  let fixed = 0;
+  for (const sim of targets) {
+    try {
+      await deleteSim(sim.id);
+      await upsertSim({
+        primaryNumber: sim.secondaryNumber || null,
+        secondaryNumber: sim.primaryNumber || "",
+        notes: sim.notes,
+      });
+      fixed += 1;
+    } catch (err) {
+      console.warn("Auto-fix swap failed for SIM", sim.id, err);
+    }
+  }
+  await refreshAllData();
+  render();
+  showToast(`${fixed} of ${targets.length} SIMs fixed.`, fixed < targets.length);
 }
 
 function openSimEditor(simId) {
@@ -3725,12 +3876,25 @@ function openSimEditor(simId) {
   modal.querySelector('[data-act="cancel"]').onclick = closeModal;
 
   modal.querySelector('[data-act="save"]').onclick = async () => {
-    const primary = modal.querySelector("#simPrimary").value.trim();
-    const secondary = modal.querySelector("#simSecondary").value.trim();
+    let primary = modal.querySelector("#simPrimary").value.trim();
+    let secondary = modal.querySelector("#simSecondary").value.trim();
     const notes = modal.querySelector("#simNotes").value.trim() || null;
     if (!secondary) {
       showToast("Secondary number (ICCID) is required.", true);
       return;
+    }
+    // Auto-detect swap and offer to fix before saving.
+    if (pairLooksSwapped(primary, secondary)) {
+      const swap = await showConfirm({
+        title: "Numbers look swapped",
+        message: `<strong>${escapeHtml(primary)}</strong> looks like a 20-digit ICCID (should be the secondary), and <strong>${escapeHtml(secondary)}</strong> looks like a 13-digit primary number. Swap them automatically before saving?`,
+        confirmLabel: "Swap & save",
+      });
+      if (swap) {
+        const tmp = primary;
+        primary = secondary;
+        secondary = tmp;
+      }
     }
     closeModal();
     renderLoading(sim ? "Saving changes..." : "Adding SIM...");
@@ -4555,6 +4719,19 @@ function openStockEditor(itemId, categoryOptions) {
             true
           );
           return;
+        }
+      }
+      // Auto-detect swap and offer to fix before saving.
+      if (pairLooksSwapped(simPrimary, simSecondary)) {
+        const swap = await showConfirm({
+          title: "Numbers look swapped",
+          message: `<strong>${escapeHtml(simPrimary)}</strong> looks like a 20-digit ICCID (should be the secondary), and <strong>${escapeHtml(simSecondary)}</strong> looks like a 13-digit primary number. Swap them before saving?`,
+          confirmLabel: "Swap & save",
+        });
+        if (swap) {
+          const tmp = simPrimary;
+          simPrimary = simSecondary;
+          simSecondary = tmp;
         }
       }
       metadata.primary = simPrimary || null;
