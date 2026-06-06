@@ -2906,3 +2906,314 @@ tr.empty-row td {
 .summary-box.summary-danger {
   border-left-color: var(--danger) !important;
 }
+
+/* ============================================================
+   v1.8 — Interactive dashboard, vibrant stats, version badge
+   ============================================================ */
+
+.app-version {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 0.45rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: linear-gradient(135deg, #0891b2, #0ea5e9);
+  color: white;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  box-shadow: 0 2px 6px rgba(8, 145, 178, 0.25);
+  position: relative;
+  top: -2px;
+}
+
+/* Dashboard grid — colorful interactive stat tiles */
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+  margin: 0.5rem 0 1.2rem;
+}
+
+.dash-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1rem 1.1rem;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.15s, box-shadow 0.2s, border-color 0.15s;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.dash-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 4px;
+  background: var(--card-accent, var(--primary));
+}
+
+.dash-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.1);
+  border-color: var(--card-accent, var(--primary));
+}
+
+.dash-card.dash-cyan { --card-accent: #0891b2; }
+.dash-card.dash-blue { --card-accent: #2563eb; }
+.dash-card.dash-green { --card-accent: #10b981; }
+.dash-card.dash-amber { --card-accent: #f59e0b; }
+.dash-card.dash-red { --card-accent: #ef4444; }
+.dash-card.dash-purple { --card-accent: #a855f7; }
+.dash-card.dash-teal { --card-accent: #14b8a6; }
+.dash-card.dash-slate { --card-accent: #64748b; }
+
+.dash-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.dash-icon {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.dash-trend {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.dash-trend.warn-trend {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.dash-trend.ok-trend {
+  background: #d1fae5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+
+.dash-num {
+  font-size: 2.4rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  margin: 0.2rem 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-label {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.dash-go {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--card-accent, var(--primary));
+  letter-spacing: 0.02em;
+  margin-top: 0.3rem;
+}
+
+/* Two-column dashboard row */
+.dash-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+  margin-top: 0.4rem;
+}
+
+@media (max-width: 900px) {
+  .dash-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dash-half {
+  min-width: 0;
+}
+
+/* Activity feed */
+.activity-feed {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.activity-row {
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+  align-items: flex-start;
+}
+
+.activity-row:last-child {
+  border-bottom: none;
+}
+
+.activity-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border-radius: 8px;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.activity-row.ev-install .activity-icon {
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.activity-row.ev-repair .activity-icon {
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.activity-row.ev-delete .activity-icon {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.activity-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.activity-title strong {
+  color: var(--text);
+  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+}
+
+.activity-detail {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.activity-meta {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+/* Category bars */
+.cat-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding-top: 0.2rem;
+}
+
+.cat-bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.cat-bar-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.cat-bar-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cat-bar-qty {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.cat-bar-track {
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.cat-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease-out;
+}
+
+/* Page summary boxes — keep accent on left, add a subtle right gradient */
+.summary-box {
+  position: relative;
+}
+
+.summary-box.summary-warn { border-left-color: #f59e0b !important; }
+.summary-box.summary-warn strong { color: #d97706; }
+.summary-box.summary-danger { border-left-color: #ef4444 !important; }
+.summary-box.summary-danger strong { color: #dc2626; }
+.summary-box.summary-ok { border-left-color: #10b981 !important; }
+.summary-box.summary-ok strong { color: #059669; }
+.summary-box.summary-info { border-left-color: #2563eb !important; }
+.summary-box.summary-info strong { color: #1d4ed8; }
+.summary-box.summary-purple { border-left-color: #a855f7 !important; }
+.summary-box.summary-purple strong { color: #9333ea; }
+
+/* Mobile: dashboard stats tile in 2 cols */
+@media (max-width: 640px) {
+  .dash-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.55rem;
+  }
+  .dash-num {
+    font-size: 1.8rem;
+  }
+  .dash-card {
+    padding: 0.75rem 0.85rem;
+    border-radius: 12px;
+  }
+  .dash-icon {
+    font-size: 1.1rem;
+  }
+  .activity-icon {
+    width: 28px;
+    height: 28px;
+    font-size: 0.85rem;
+  }
+}
