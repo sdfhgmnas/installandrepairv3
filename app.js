@@ -3,6 +3,10 @@ const modalOverlay = document.getElementById("modalOverlay");
 const modal = document.getElementById("modal");
 const toast = document.getElementById("toast");
 
+// App version — bump on every meaningful edit so deployed copies are
+// visibly identifiable.
+const APP_VERSION = "1.8.0";
+
 const USERS = {
   akash: { password: "akash", role: "akash" },
   admin: { password: "password1", role: "admin" },
@@ -1356,7 +1360,7 @@ function renderHeader(title, subtitle) {
             </svg>
           </span>
           <div>
-            <h1>${escapeHtml(title)}</h1>
+            <h1>${escapeHtml(title)} <span class="app-version" title="App version">v${APP_VERSION}</span></h1>
             <p>${escapeHtml(subtitle)}</p>
           </div>
         </div>
@@ -3069,41 +3073,203 @@ function renderDashboard() {
   const pendingCount = getPendingActionRows().length;
   const allSims = loadSims();
   const pendingPrimary = allSims.filter((s) => !s.primaryNumber).length;
+  const inUseSims = allSims.filter((s) => {
+    const v = (s.primaryNumber || s.secondaryNumber || "").toLowerCase();
+    if (!v) return false;
+    return allInstalls.some((inst) =>
+      inst.simHistory.some(
+        (h) => h.active && (h.value || "").toLowerCase() === v
+      )
+    );
+  }).length;
   const allStock = loadStockItems();
   const lowStock = allStock.filter(
     (i) => i.lowStockThreshold != null && i.quantity <= i.lowStockThreshold
   ).length;
+  const totalUnits = allStock.reduce((s, i) => s + (i.quantity || 0), 0);
+  const allDeletions = deletionLog;
+
+  // Recent activity feed (top 12 events across installs, repairs, deletions)
+  const events = [
+    ...allInstalls.map((i) => ({
+      kind: "install",
+      at: i.createdAt,
+      title: i.vehicleNo,
+      detail: `IMEI ${getCurrentImei(i)}`,
+      by: i.createdBy || "akash",
+    })),
+    ...allMaint.map((m) => ({
+      kind: "repair",
+      at: m.createdAt,
+      title: m.vehicleNo,
+      detail: workLabels(m),
+      by: m.createdBy || "akash",
+    })),
+    ...allDeletions.map((d) => ({
+      kind: "delete",
+      at: d.deletedAt,
+      title: d.entityLabel || "—",
+      detail: d.reason || "",
+      by: d.deletedBy || "—",
+      entityType: d.entityType,
+    })),
+  ]
+    .sort((a, b) => new Date(b.at) - new Date(a.at))
+    .slice(0, 12);
+
+  // Stock breakdown by category (top 6, others bucketed)
+  const byCategory = {};
+  for (const item of allStock) {
+    const k = item.category || "Uncategorized";
+    byCategory[k] = (byCategory[k] || 0) + (item.quantity || 0);
+  }
+  const catEntries = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
+  const totalCatUnits = catEntries.reduce((s, e) => s + e[1], 0) || 1;
+  // Color palette for category bars
+  const catColors = ["#0891b2", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#ec4899", "#64748b"];
+
+  // Akash's contribution this week (last 7 days)
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const installsThisWeek = allInstalls.filter((i) => new Date(i.createdAt) >= weekAgo).length;
+  const repairsThisWeek = allMaint.filter((m) => new Date(m.createdAt) >= weekAgo).length;
+
+  function eventIcon(kind, entityType) {
+    if (kind === "install") return "🆕";
+    if (kind === "repair") return "🔧";
+    if (kind === "delete") {
+      if (entityType === "installation") return "🗑️🆕";
+      if (entityType === "maintenance") return "🗑️🔧";
+      if (entityType === "stock_item") return "🗑️📦";
+      return "🗑️";
+    }
+    return "•";
+  }
+  function eventClass(kind) {
+    if (kind === "install") return "ev-install";
+    if (kind === "repair") return "ev-repair";
+    if (kind === "delete") return "ev-delete";
+    return "";
+  }
 
   app.innerHTML = `
-    ${renderHeader("Dashboard", "Fleet overview")}
+    ${renderHeader("Dashboard", "Fleet operations at a glance")}
     <main class="main">
       ${renderAdminNav("dashboard")}
+
+      <!-- Colorful primary stats -->
       <div class="dash-grid">
-        <button type="button" class="dash-card" data-go="installations">
+        <button type="button" class="dash-card dash-cyan" data-go="installations">
+          <div class="dash-card-top">
+            <span class="dash-icon">🆕</span>
+            ${installsThisWeek ? `<span class="dash-trend">+${installsThisWeek} this week</span>` : ""}
+          </div>
           <span class="dash-num">${allInstalls.length}</span>
           <span class="dash-label">Installations</span>
           <span class="dash-go">View all →</span>
         </button>
-        <button type="button" class="dash-card" data-go="repairs">
+        <button type="button" class="dash-card dash-blue" data-go="repairs">
+          <div class="dash-card-top">
+            <span class="dash-icon">🔧</span>
+            ${repairsThisWeek ? `<span class="dash-trend">+${repairsThisWeek} this week</span>` : ""}
+          </div>
           <span class="dash-num">${allMaint.length}</span>
           <span class="dash-label">Repair Records</span>
           <span class="dash-go">View all →</span>
         </button>
-        <button type="button" class="dash-card ${pendingCount ? "warn" : "ok"}" data-go="pending">
+        <button type="button" class="dash-card ${pendingCount ? "dash-amber" : "dash-green"}" data-go="pending">
+          <div class="dash-card-top">
+            <span class="dash-icon">${pendingCount ? "⚠️" : "✓"}</span>
+            ${pendingCount ? `<span class="dash-trend warn-trend">needs action</span>` : `<span class="dash-trend ok-trend">all clear</span>`}
+          </div>
           <span class="dash-num">${pendingCount}</span>
           <span class="dash-label">Pending Actions</span>
           <span class="dash-go">${pendingCount ? "Resolve →" : "All clear ✓"}</span>
         </button>
-        <button type="button" class="dash-card" data-go="sim-db">
+        <button type="button" class="dash-card dash-purple" data-go="sim-db">
+          <div class="dash-card-top">
+            <span class="dash-icon">📶</span>
+            ${inUseSims ? `<span class="dash-trend">${inUseSims} in use</span>` : ""}
+          </div>
           <span class="dash-num">${allSims.length}</span>
           <span class="dash-label">SIMs in database${pendingPrimary ? ` · ${pendingPrimary} pending primary` : ""}</span>
           <span class="dash-go">View SIM database →</span>
         </button>
-        <button type="button" class="dash-card ${lowStock ? "warn" : ""}" data-go="stock">
+        <button type="button" class="dash-card ${lowStock ? "dash-red" : "dash-teal"}" data-go="stock">
+          <div class="dash-card-top">
+            <span class="dash-icon">📦</span>
+            ${lowStock ? `<span class="dash-trend warn-trend">${lowStock} low</span>` : `<span class="dash-trend ok-trend">${totalUnits} units</span>`}
+          </div>
           <span class="dash-num">${allStock.length}</span>
           <span class="dash-label">Stock items${lowStock ? ` · ${lowStock} low` : ""}</span>
           <span class="dash-go">View stock →</span>
         </button>
+        <button type="button" class="dash-card dash-slate" data-go="deletions">
+          <div class="dash-card-top">
+            <span class="dash-icon">🗑️</span>
+            <span class="dash-trend">audit log</span>
+          </div>
+          <span class="dash-num">${allDeletions.length}</span>
+          <span class="dash-label">Deletions logged</span>
+          <span class="dash-go">View audit →</span>
+        </button>
+      </div>
+
+      <!-- Two-column: Activity feed + Stock by category -->
+      <div class="dash-row">
+        <section class="card dash-half">
+          <div class="section-heading">
+            <div>
+              <h2>📋 Recent Activity</h2>
+              <p class="section-subtitle">Last 12 events across the fleet.</p>
+            </div>
+          </div>
+          ${events.length ? `
+            <ul class="activity-feed">
+              ${events.map((e) => `
+                <li class="activity-row ${eventClass(e.kind)}">
+                  <span class="activity-icon">${eventIcon(e.kind, e.entityType)}</span>
+                  <div class="activity-body">
+                    <div class="activity-title">
+                      <strong>${escapeHtml(e.title)}</strong>
+                      <span class="activity-detail">${escapeHtml(e.detail)}</span>
+                    </div>
+                    <div class="activity-meta">
+                      ${escapeHtml(formatDateTime(e.at))} · by ${escapeHtml(e.by)}
+                    </div>
+                  </div>
+                </li>
+              `).join("")}
+            </ul>
+          ` : `<p class="muted" style="padding: 1rem 0;">No activity yet.</p>`}
+        </section>
+
+        <section class="card dash-half">
+          <div class="section-heading">
+            <div>
+              <h2>📦 Stock by Category</h2>
+              <p class="section-subtitle">Current quantity across categories.</p>
+            </div>
+          </div>
+          ${catEntries.length ? `
+            <div class="cat-bars">
+              ${catEntries.map(([name, qty], i) => {
+                const pct = Math.max(2, Math.round((qty / totalCatUnits) * 100));
+                const color = catColors[i % catColors.length];
+                return `
+                  <div class="cat-bar-row">
+                    <div class="cat-bar-label">
+                      <span class="cat-bar-name">${escapeHtml(name)}</span>
+                      <span class="cat-bar-qty mono">${qty}</span>
+                    </div>
+                    <div class="cat-bar-track">
+                      <div class="cat-bar-fill" style="width: ${pct}%; background: ${color};"></div>
+                    </div>
+                  </div>
+                `;
+              }).join("")}
+            </div>
+          ` : `<p class="muted" style="padding: 1rem 0;">No stock items yet.</p>`}
+        </section>
       </div>
     </main>
   `;
@@ -3137,10 +3303,21 @@ function renderInstallationsPage() {
     return tokens.every((t) => hay.includes(t));
   });
 
+  // Stats for the colorful strip
+  const withSecSim = allInstalls.filter((i) => i.secondarySim).length;
+  const recentInstalls = allInstalls.filter(
+    (i) => new Date(i.createdAt) >= new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  ).length;
+
   app.innerHTML = `
     ${renderHeader("Installations", `${allInstalls.length} vehicles registered`)}
     <main class="main">
       ${renderAdminNav("installations")}
+      <div class="summary-grid">
+        <div class="summary-box summary-info"><strong>${allInstalls.length}</strong><span>Total installs</span></div>
+        <div class="summary-box summary-ok"><strong>${recentInstalls}</strong><span>This week</span></div>
+        <div class="summary-box summary-purple"><strong>${withSecSim}</strong><span>With 2nd SIM</span></div>
+      </div>
       <section class="card">
         <div class="section-heading">
           <div>
@@ -3245,10 +3422,23 @@ function renderRepairsPage() {
     return tokens.every((t) => hay.includes(t));
   });
 
+  // Stats: total / sim changes / device changes / this week
+  const simChangeCount = allMaint.filter((m) => m.simChange).length;
+  const deviceChangeCount = allMaint.filter((m) => m.deviceChange).length;
+  const recentRepairs = allMaint.filter(
+    (m) => new Date(m.createdAt) >= new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  ).length;
+
   app.innerHTML = `
     ${renderHeader("Repair Work", `${allMaint.length} repair records`)}
     <main class="main">
       ${renderAdminNav("repairs")}
+      <div class="summary-grid">
+        <div class="summary-box summary-info"><strong>${allMaint.length}</strong><span>Total repairs</span></div>
+        <div class="summary-box summary-ok"><strong>${recentRepairs}</strong><span>This week</span></div>
+        <div class="summary-box summary-purple"><strong>${simChangeCount}</strong><span>SIM changes</span></div>
+        <div class="summary-box summary-warn"><strong>${deviceChangeCount}</strong><span>Device changes</span></div>
+      </div>
       <section class="card">
         <div class="section-heading">
           <div>
@@ -3722,9 +3912,9 @@ function renderSimDb() {
     <main class="main">
       ${renderAdminNav("sim-db")}
       <div class="summary-grid">
-        <div class="summary-box"><strong>${totalSims}</strong><span>Total SIMs</span></div>
-        <div class="summary-box"><strong>${inUseCount}</strong><span>In use</span></div>
-        <div class="summary-box"><strong>${availableCount}</strong><span>Available</span></div>
+        <div class="summary-box summary-info"><strong>${totalSims}</strong><span>Total SIMs</span></div>
+        <div class="summary-box summary-purple"><strong>${inUseCount}</strong><span>In use</span></div>
+        <div class="summary-box summary-ok"><strong>${availableCount}</strong><span>Available</span></div>
         <div class="summary-box ${pendingPrimary ? "summary-warn" : ""}"><strong>${pendingPrimary}</strong><span>Pending primary</span></div>
         ${swappedCount ? `<div class="summary-box summary-danger"><strong>${swappedCount}</strong><span>Looks swapped</span></div>` : ""}
       </div>
@@ -4283,9 +4473,9 @@ function renderStockPage() {
     <main class="main">
       ${renderAdminNav("stock")}
       <div class="summary-grid">
-        <div class="summary-box"><strong>${totalItems}</strong><span>Items</span></div>
-        <div class="summary-box"><strong>${fmtQty(totalUnits)}</strong><span>Total units</span></div>
-        <div class="summary-box ${lowStockItems.length ? "summary-warn" : ""}"><strong>${lowStockItems.length}</strong><span>Low stock</span></div>
+        <div class="summary-box summary-info"><strong>${totalItems}</strong><span>Items</span></div>
+        <div class="summary-box summary-ok"><strong>${fmtQty(totalUnits)}</strong><span>Total units</span></div>
+        <div class="summary-box ${lowStockItems.length ? "summary-warn" : "summary-ok"}"><strong>${lowStockItems.length}</strong><span>Low stock</span></div>
       </div>
       <section class="card">
         <div class="section-heading">
