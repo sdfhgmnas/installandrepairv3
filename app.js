@@ -3691,19 +3691,24 @@ function renderSimDb() {
         .map((sim) => {
           const status = simStatus(sim);
           const isSwapped = simLooksSwapped(sim);
-          const primary = sim.primaryNumber || `<span class="muted">Not set</span>`;
+          // If the row's data looks swapped, display it in the CORRECT order
+          // visually so the table is immediately readable while the user
+          // decides whether to persist the swap via the Fix button.
+          const displayPrimary = isSwapped ? sim.secondaryNumber : sim.primaryNumber;
+          const displaySecondary = isSwapped ? sim.primaryNumber : sim.secondaryNumber;
+          const primaryCell = displayPrimary || `<span class="muted">Not set</span>`;
           return `
             <tr class="${isSwapped ? "row-swap-warn" : ""}">
               <td class="mono">
-                ${typeof primary === "string" && primary.startsWith("<") ? primary : escapeHtml(primary)}
-                ${isSwapped ? `<span class="swap-tag" title="This looks like a 20-digit ICCID in the primary slot. Use the Fix button to swap.">looks swapped</span>` : ""}
+                ${typeof primaryCell === "string" && primaryCell.startsWith("<") ? primaryCell : escapeHtml(primaryCell)}
+                ${isSwapped ? `<span class="swap-tag" title="Stored swapped in the database — showing the corrected order here. Click ↔ Fix to make it permanent.">auto-corrected display</span>` : ""}
               </td>
-              <td class="mono">${escapeHtml(sim.secondaryNumber)}</td>
+              <td class="mono">${escapeHtml(displaySecondary || "")}</td>
               <td><span class="sim-status ${status.className}">${escapeHtml(status.label)}</span></td>
               <td>${escapeHtml(sim.notes || "")}</td>
               <td class="date-cell">${escapeHtml(formatDateTime(sim.createdAt))}</td>
               <td class="row-actions">
-                ${isSwapped ? `<button type="button" class="btn btn-warn btn-sm sim-row-fix" data-id="${sim.id}" title="Swap primary ↔ secondary">↔ Fix swap</button>` : ""}
+                ${isSwapped ? `<button type="button" class="btn btn-warn btn-sm sim-row-fix" data-id="${sim.id}" title="Persist the swap in the database">↔ Fix in DB</button>` : ""}
                 <button type="button" class="btn btn-outline btn-sm sim-row-edit" data-id="${sim.id}">✎ Edit</button>
                 <button type="button" class="btn btn-danger btn-sm sim-row-delete" data-id="${sim.id}">Delete</button>
               </td>
@@ -3725,8 +3730,8 @@ function renderSimDb() {
       </div>
       ${swappedCount ? `
         <div class="swap-banner">
-          <span>⚠️ <strong>${swappedCount}</strong> SIM${swappedCount === 1 ? "" : "s"} appear to have primary &amp; secondary numbers swapped (20-digit ICCID in primary slot, short number in secondary).</span>
-          <button type="button" class="btn btn-warn btn-sm" id="fixAllSwap">↔ Auto-fix all</button>
+          <span>⚠️ <strong>${swappedCount}</strong> SIM${swappedCount === 1 ? " is" : "s are"} stored with primary &amp; secondary swapped in the database. The table below is showing them auto-corrected for readability, but the database still has them backwards. Click below to fix them permanently.</span>
+          <button type="button" class="btn btn-warn btn-sm" id="fixAllSwap">↔ Fix all in DB</button>
         </div>
       ` : ""}
       <section class="card">
