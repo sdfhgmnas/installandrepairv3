@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.9.0";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -3084,10 +3084,28 @@ function renderDashboard() {
   }).length;
   const allStock = loadStockItems();
   const lowStock = allStock.filter(
-    (i) => i.lowStockThreshold != null && i.quantity <= i.lowStockThreshold
+    (i) =>
+      !isTrackableCategory(i.category) &&
+      i.lowStockThreshold != null &&
+      i.quantity <= i.lowStockThreshold
   ).length;
   const totalUnits = allStock.reduce((s, i) => s + (i.quantity || 0), 0);
   const allDeletions = deletionLog;
+
+  // Pending tasks breakdown — what specifically needs action?
+  // (Each task entry comes from getPendingActionRows; count by type.)
+  const pendingRows = getPendingActionRows();
+  const pendingByType = {
+    update_portal: 0,
+    deactivate_sim: 0,
+    repair_device: 0,
+    repair_sensor: 0,
+    update_sim_primary: 0,
+  };
+  for (const row of pendingRows) {
+    const t = row.task?.type;
+    if (t && pendingByType[t] != null) pendingByType[t] += 1;
+  }
 
   // Recent activity feed (top 12 events across installs, repairs, deletions)
   const events = [
@@ -3214,6 +3232,46 @@ function renderDashboard() {
         </button>
       </div>
 
+      <!-- Pending Work breakdown by task type -->
+      ${pendingCount ? `
+        <section class="card pending-breakdown-card">
+          <div class="section-heading">
+            <div>
+              <h2>⚠️ Pending Work — by type</h2>
+              <p class="section-subtitle">Tap any tile to jump to the matching tasks.</p>
+            </div>
+            <button type="button" class="btn btn-warn btn-sm" data-go="pending">Resolve all →</button>
+          </div>
+          <div class="pending-breakdown">
+            <button type="button" class="pending-tile ${pendingByType.update_portal ? "tile-active" : "tile-zero"}" data-go="pending">
+              <span class="pt-icon">🖥️</span>
+              <span class="pt-num">${pendingByType.update_portal}</span>
+              <span class="pt-label">Update on Portal</span>
+            </button>
+            <button type="button" class="pending-tile ${pendingByType.deactivate_sim ? "tile-active" : "tile-zero"}" data-go="pending">
+              <span class="pt-icon">📵</span>
+              <span class="pt-num">${pendingByType.deactivate_sim}</span>
+              <span class="pt-label">Deactivate SIM</span>
+            </button>
+            <button type="button" class="pending-tile ${pendingByType.update_sim_primary ? "tile-active" : "tile-zero"}" data-go="pending">
+              <span class="pt-icon">📞</span>
+              <span class="pt-num">${pendingByType.update_sim_primary}</span>
+              <span class="pt-label">Update SIM primary (secondary entered)</span>
+            </button>
+            <button type="button" class="pending-tile ${pendingByType.repair_device ? "tile-active" : "tile-zero"}" data-go="pending">
+              <span class="pt-icon">🔧</span>
+              <span class="pt-num">${pendingByType.repair_device}</span>
+              <span class="pt-label">Repair Device</span>
+            </button>
+            <button type="button" class="pending-tile ${pendingByType.repair_sensor ? "tile-active" : "tile-zero"}" data-go="pending">
+              <span class="pt-icon">🛰️</span>
+              <span class="pt-num">${pendingByType.repair_sensor}</span>
+              <span class="pt-label">Repair Sensor</span>
+            </button>
+          </div>
+        </section>
+      ` : ""}
+
       <!-- Two-column: Activity feed + Stock by category -->
       <div class="dash-row">
         <section class="card dash-half">
@@ -3275,7 +3333,7 @@ function renderDashboard() {
   `;
   bindLogout();
   bindAdminNav();
-  app.querySelectorAll(".dash-card[data-go]").forEach((btn) => {
+  app.querySelectorAll("[data-go]").forEach((btn) => {
     btn.addEventListener("click", () => setView(btn.dataset.go));
   });
 }
@@ -4174,6 +4232,15 @@ function categoryKind(category) {
   return "generic";
 }
 
+// "Trackable" items each represent ONE specific device (unique IMEI, ICCID,
+// sensor No / MAC). For these, qty is always 1 (in stock) or 0 (installed),
+// so the "low stock" concept is meaningless and shouldn't be applied.
+// Low-stock alerts only make sense for bulk consumables (Roll, Tape, Drill...).
+function isTrackableCategory(category) {
+  const k = categoryKind(category);
+  return k === "gps" || k === "sim" || k === "sensor";
+}
+
 // --- Name normalization & fuzzy matching for duplicate prevention ---
 
 // Strip all non-alphanumeric, lowercase. "FMB-02" / "fmb 02" -> "fmb02"
@@ -4395,13 +4462,14 @@ function renderStockPage() {
     (sum, i) => sum + (i.costPerUnit != null ? i.quantity * i.costPerUnit : 0),
     0
   );
-  const lowStockItems = items.filter(
-    (i) => i.lowStockThreshold != null && i.quantity <= i.lowStockThreshold
-  );
-
+  // Low-stock only applies to BULK items (Roll, Tape, Drill...). For
+  // trackable items (GPS, SIM, Sensor) each row IS one specific unit, so
+  // the concept of "low stock" doesn't apply.
   function isLow(item) {
+    if (isTrackableCategory(item.category)) return false;
     return item.lowStockThreshold != null && item.quantity <= item.lowStockThreshold;
   }
+  const lowStockItems = items.filter(isLow);
 
   // Category filter chips
   const chipsHtml = `
@@ -4416,6 +4484,32 @@ function renderStockPage() {
         .join("")}
     </div>
   `;
+
+  // Per-name stat chips inside the current filter — lets you see
+  // "FMB-920: 8" / "FMB-100: 4" at a glance instead of scrolling rows.
+  // Aggregates total qty per distinct item name (preserves the trackable
+  // grain — each FMB-920 stock row contributes its quantity).
+  const nameStats = {};
+  for (const it of filtered) {
+    const k = it.name;
+    if (!nameStats[k]) nameStats[k] = { qty: 0, rows: 0 };
+    nameStats[k].qty += it.quantity || 0;
+    nameStats[k].rows += 1;
+  }
+  const nameEntries = Object.entries(nameStats).sort((a, b) => b[1].qty - a[1].qty);
+  const STAT_CHIP_COLORS = ["chip-cyan", "chip-blue", "chip-green", "chip-amber", "chip-purple", "chip-teal", "chip-pink", "chip-slate"];
+  const nameStripHtml = nameEntries.length > 1 ? `
+    <div class="name-stat-strip">
+      ${nameEntries
+        .map(([name, info], i) => `
+          <div class="stat-chip ${STAT_CHIP_COLORS[i % STAT_CHIP_COLORS.length]}">
+            <span class="stat-chip-num">${info.qty}</span>
+            <span class="stat-chip-name">${escapeHtml(name)}</span>
+            ${info.rows !== info.qty ? `<span class="stat-chip-sub">${info.rows} rows</span>` : ""}
+          </div>
+        `).join("")}
+    </div>
+  ` : "";
 
   // Sort: low-stock first, then by name
   filtered.sort((a, b) => {
@@ -4493,6 +4587,7 @@ function renderStockPage() {
           <input type="search" id="stockSearch" placeholder="Search anything — name, IMEI, SIM number, MAC, supplier..." value="${escapeHtml(stockQuery)}" />
         </div>
         ${liveCategories.length ? chipsHtml : ""}
+        ${nameStripHtml}
         <div class="table-wrap">
           <table>
             <thead>
@@ -4637,9 +4732,10 @@ function openStockEditor(itemId, categoryOptions) {
         <label for="stkCost">Cost per unit (₹)</label>
         <input type="number" id="stkCost" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="optional" value="${item?.costPerUnit ?? ""}" class="mono" />
       </div>
-      <div class="field">
+      <div class="field low-stock-field" id="lowStockField">
         <label for="stkLow">Low-stock alert at</label>
         <input type="number" id="stkLow" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="5" value="${item?.lowStockThreshold ?? 5}" class="mono" />
+        <p class="hint">Only used for bulk consumables (rolls, tape, drill bits).</p>
       </div>
     </div>
     <div class="field">
@@ -4675,6 +4771,9 @@ function openStockEditor(itemId, categoryOptions) {
     modal.querySelector("#metaGps").classList.toggle("hidden", kind !== "gps");
     modal.querySelector("#metaSim").classList.toggle("hidden", kind !== "sim");
     modal.querySelector("#metaSensor").classList.toggle("hidden", kind !== "sensor");
+    // Low-stock alert only makes sense for bulk items (Roll, Tape, etc.)
+    const trackable = kind === "gps" || kind === "sim" || kind === "sensor";
+    modal.querySelector("#lowStockField")?.classList.toggle("hidden", trackable);
   }
   refreshMetaVisibility();
   categoryEl.addEventListener("input", refreshMetaVisibility);
@@ -4967,7 +5066,12 @@ function openStockEditor(itemId, categoryOptions) {
         unit,
         quantity,
         costPerUnit: costRaw === "" ? null : Number(costRaw),
-        lowStockThreshold: lowRaw === "" ? null : Number(lowRaw),
+        // Trackable categories don't use the low-stock concept; force null.
+        lowStockThreshold: isTrackableCategory(category)
+          ? null
+          : lowRaw === ""
+          ? null
+          : Number(lowRaw),
         notes,
         supplier,
         metadata,
