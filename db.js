@@ -525,6 +525,79 @@ async function insertStockTransaction(tx) {
 }
 
 /* ============================================================
+   DELETION AUDIT LOG
+   Immutable record of every destructive action (with reason).
+   ============================================================ */
+
+function rowToDeletionLog(row) {
+  return {
+    id: row.id,
+    entityType: row.entity_type,
+    entityId: row.entity_id || null,
+    entityLabel: row.entity_label || null,
+    reason: row.reason || null,
+    deletedBy: row.deleted_by || null,
+    snapshot: row.snapshot || null,
+    deletedAt: row.deleted_at,
+  };
+}
+
+const DELETION_LOG_TABLE_MISSING = "DELETION_LOG_TABLE_MISSING";
+
+function isMissingDeletionLogError(err) {
+  if (!err) return false;
+  const msg = (err.message || "").toLowerCase();
+  return (
+    err.code === "42P01" ||
+    err.code === "PGRST205" ||
+    err.code === "PGRST116" ||
+    (msg.includes("relation") && msg.includes("deletion_log") && msg.includes("does not exist")) ||
+    (msg.includes("could not find") && msg.includes("deletion_log") && msg.includes("schema")) ||
+    (msg.includes("schema cache") && msg.includes("deletion_log"))
+  );
+}
+
+async function fetchDeletionLog(limit = 200) {
+  const { data, error } = await getDb()
+    .from("deletion_log")
+    .select("*")
+    .order("deleted_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    if (isMissingDeletionLogError(error)) {
+      const e = new Error("deletion_log table missing — please run deletion-log-migration.sql in Supabase");
+      e.code = DELETION_LOG_TABLE_MISSING;
+      throw e;
+    }
+    throw new Error(error.message);
+  }
+  return (data || []).map(rowToDeletionLog);
+}
+
+async function insertDeletionLog(entry) {
+  const { error } = await getDb()
+    .from("deletion_log")
+    .insert({
+      entity_type: entry.entityType,
+      entity_id: entry.entityId || null,
+      entity_label: entry.entityLabel || null,
+      reason: entry.reason || null,
+      deleted_by: entry.deletedBy || null,
+      snapshot: entry.snapshot || null,
+    });
+  if (error) {
+    if (isMissingDeletionLogError(error)) {
+      // Don't throw — deletion still proceeds. Just warn.
+      console.warn("deletion_log table missing — deletion was not audited.");
+      return false;
+    }
+    console.warn("Deletion log write failed:", error.message);
+    return false;
+  }
+  return true;
+}
+
+/* ============================================================
    SUPPLIERS TABLE
    Admin-managed list of suppliers used in the Stock page.
    ============================================================ */
@@ -720,6 +793,11 @@ function subscribeRealtime(onChange) {
       "postgres_changes",
       { event: "*", schema: "public", table: "suppliers" },
       (payload) => onChange("data", { table: "suppliers", payload })
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "deletion_log" },
+      (payload) => onChange("data", { table: "deletion_log", payload })
     )
     .subscribe((status) => onChange("status", { status }));
   return channel;
