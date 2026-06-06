@@ -30,11 +30,13 @@ let stockItems = [];
 let stockTransactions = [];
 let stockCategories = [];
 let suppliers = [];
+let deletionLog = [];
 let simsTableReady = true;
 let stockItemsTableReady = true;
 let stockTxTableReady = true;
 let stockCategoriesTableReady = true;
 let suppliersTableReady = true;
+let deletionLogTableReady = true;
 let isLoadingData = false;
 let lastSyncedAt = null;
 
@@ -42,6 +44,73 @@ let lastSyncedAt = null;
 let realtimeChannel = null;
 let realtimeStatus = "idle";
 let refreshTimer = null;
+
+/* ============================================================
+   DELETION REASON PROMPT + AUDIT
+   Every destructive action goes through promptForReason and is
+   logged to deletion_log (visible to admin in the Deletions tab).
+   ============================================================ */
+
+function promptForReason({ title, message, confirmLabel = "Delete", placeholder = "Why are you deleting this?" }) {
+  return new Promise((resolve) => {
+    modal.innerHTML = `
+      <h3>🗑️ ${escapeHtml(title)}</h3>
+      ${message ? `<p class="modal-desc">${message}</p>` : ""}
+      <div class="field">
+        <label for="delReason">Reason for deletion <span class="required">*</span></label>
+        <input type="text" id="delReason" autocomplete="off" placeholder="${escapeHtml(placeholder)}" />
+        <p class="hint">This reason will be saved permanently in the audit log so admin can review what was deleted and why.</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" data-act="cancel">Cancel</button>
+        <button type="button" class="btn btn-danger" data-act="confirm">${escapeHtml(confirmLabel)}</button>
+      </div>
+    `;
+    modalOverlay.classList.remove("hidden");
+    const input = modal.querySelector("#delReason");
+    input?.focus();
+    const done = (val) => {
+      closeModal();
+      resolve(val);
+    };
+    modal.querySelector('[data-act="cancel"]').onclick = () => done(null);
+    modal.querySelector('[data-act="confirm"]').onclick = () => {
+      const v = (input.value || "").trim();
+      if (!v) {
+        showToast("Please enter a reason for deletion.", true);
+        return;
+      }
+      done(v);
+    };
+    input?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") done(null);
+      if (e.key === "Enter") {
+        e.preventDefault();
+        modal.querySelector('[data-act="confirm"]').click();
+      }
+    });
+    modalOverlay.onclick = (e) => {
+      if (e.target === modalOverlay) done(null);
+    };
+  });
+}
+
+async function auditDeletion({ entityType, entityId, entityLabel, reason, snapshot }) {
+  if (!deletionLogTableReady) return;
+  try {
+    await insertDeletionLog({
+      entityType,
+      entityId,
+      entityLabel,
+      reason,
+      deletedBy: currentUser || "unknown",
+      snapshot,
+    });
+  } catch (err) {
+    console.warn("Audit log write failed:", err);
+  }
+}
+
 
 /* ============================================================
    STOCK AUTO-CONSUME
@@ -712,6 +781,18 @@ async function refreshAllData() {
         console.warn("suppliers table missing — Supplier dropdown will be empty until migration runs.");
         suppliers = [];
         suppliersTableReady = false;
+      } else {
+        throw err;
+      }
+    }
+    try {
+      deletionLog = await withTimeout(fetchDeletionLog(200), 20000, "Fetch deletion log");
+      deletionLogTableReady = true;
+    } catch (err) {
+      if (err.code === DELETION_LOG_TABLE_MISSING) {
+        console.warn("deletion_log table missing — deletions will not be audited until migration runs.");
+        deletionLog = [];
+        deletionLogTableReady = false;
       } else {
         throw err;
       }
@@ -1602,24 +1683,38 @@ async function deleteAkashInstallation(installId) {
   const inst = loadInstallations().find((i) => i.id === installId);
   if (!inst) return;
   const linkedRepairs = loadMaintenance().filter((r) => r.installationId === installId);
-  const ok = await showConfirm({
+  const reason = await promptForReason({
     title: "Delete this installation?",
-    message: `Remove the installation for ${inst.vehicleNo}? ${linkedRepairs.length ? `This will also remove ${linkedRepairs.length} repair record${linkedRepairs.length === 1 ? "" : "s"} linked to it. ` : ""}Any stock that was consumed (IMEI / SIM / sensor) will be automatically restored to inventory.`,
-    confirmLabel: "Delete",
-    danger: true,
+    message: `Removing installation for <strong>${escapeHtml(inst.vehicleNo)}</strong>. ${linkedRepairs.length ? `This will also remove <strong>${linkedRepairs.length}</strong> repair record${linkedRepairs.length === 1 ? "" : "s"} linked to it. ` : ""}Stock consumed (IMEI / SIM / sensor) will be automatically restored.`,
+    confirmLabel: "Delete installation",
+    placeholder: "e.g. wrong vehicle number, duplicate entry, install cancelled",
   });
-  if (!ok) return;
+  if (!reason) return;
   renderLoading("Deleting installation & restoring stock...");
   try {
-    // Restore stock for each linked maintenance first.
+    // Audit linked repairs first
     for (const r of linkedRepairs) {
+      await auditDeletion({
+        entityType: "maintenance",
+        entityId: r.id,
+        entityLabel: `${r.vehicleNo} · ${workLabels(r)}`,
+        reason: `Cascade-deleted with parent installation. Parent reason: ${reason}`,
+        snapshot: r,
+      });
       await restoreStockFor({
         maintenanceRecordId: r.id,
         reason: `Restored — installation for ${inst.vehicleNo} deleted`,
       });
       await deleteMaintenanceRecord(r.id);
     }
-    // Then restore stock for the installation itself.
+    // Audit + delete the installation itself
+    await auditDeletion({
+      entityType: "installation",
+      entityId: installId,
+      entityLabel: `${inst.vehicleNo} · IMEI ${getCurrentImei(inst) || "?"}`,
+      reason,
+      snapshot: inst,
+    });
     await restoreStockFor({
       installationId: installId,
       reason: `Restored — installation for ${inst.vehicleNo} deleted`,
@@ -1638,21 +1733,29 @@ async function deleteAkashInstallation(installId) {
 async function deleteAkashMaintenance(recordId) {
   const record = loadMaintenance().find((r) => r.id === recordId);
   if (!record) return;
-  const ok = await showConfirm({
+  const reason = await promptForReason({
     title: "Delete this repair entry?",
-    message: `Remove repair on ${record.vehicleNo} (${workLabels(record)})? Stock that was consumed will be restored, and any SIM/device history added by this repair will be reverted.`,
-    confirmLabel: "Delete",
-    danger: true,
+    message: `Removing repair on <strong>${escapeHtml(record.vehicleNo)}</strong> (${escapeHtml(workLabels(record))}). Stock consumed will be restored, and any SIM/device history added by this repair will be reverted.`,
+    confirmLabel: "Delete repair",
+    placeholder: "e.g. wrong vehicle, accidental save, repair cancelled",
   });
-  if (!ok) return;
+  if (!reason) return;
   renderLoading("Deleting repair & restoring state...");
   try {
-    // 1) Reverse stock consumption for this repair.
+    // 1) Audit
+    await auditDeletion({
+      entityType: "maintenance",
+      entityId: recordId,
+      entityLabel: `${record.vehicleNo} · ${workLabels(record)}`,
+      reason,
+      snapshot: record,
+    });
+    // 2) Reverse stock consumption for this repair.
     await restoreStockFor({
       maintenanceRecordId: recordId,
       reason: `Restored — repair on ${record.vehicleNo} deleted`,
     });
-    // 2) Revert simHistory / imeiHistory on the linked installation.
+    // 3) Revert simHistory / imeiHistory on the linked installation.
     const inst = loadInstallations().find((i) => i.id === record.installationId);
     if (inst) {
       let touched = false;
@@ -1662,7 +1765,6 @@ async function deleteAkashMaintenance(recordId) {
         );
         if (idx >= 0) {
           inst.simHistory.splice(idx, 1);
-          // Restore the previous active sim (the one this repair marked pendingDeactivation).
           for (let i = inst.simHistory.length - 1; i >= 0; i -= 1) {
             if (inst.simHistory[i].pendingDeactivation) {
               inst.simHistory[i].pendingDeactivation = false;
@@ -1684,7 +1786,6 @@ async function deleteAkashMaintenance(recordId) {
         );
         if (idx >= 0) {
           inst.imeiHistory.splice(idx, 1);
-          // Re-activate the previous IMEI.
           for (let i = inst.imeiHistory.length - 1; i >= 0; i -= 1) {
             inst.imeiHistory[i].active = true;
             break;
@@ -1696,7 +1797,7 @@ async function deleteAkashMaintenance(recordId) {
         await updateInstallation(inst);
       }
     }
-    // 3) Delete the maintenance record.
+    // 4) Delete the maintenance record.
     await deleteMaintenanceRecord(recordId);
     await refreshAllData();
     render();
@@ -2662,6 +2763,98 @@ function buildVehicleTimeline(inst) {
   return events;
 }
 
+/* ---------------- Page: Deletion audit log ---------------- */
+
+function renderDeletionsPage() {
+  const log = deletionLog;
+
+  // Counts by entity type
+  const counts = {
+    installation: 0,
+    maintenance: 0,
+    stock_item: 0,
+    other: 0,
+  };
+  for (const d of log) {
+    if (counts[d.entityType] != null) counts[d.entityType] += 1;
+    else counts.other += 1;
+  }
+
+  const typeIcon = {
+    installation: "🆕",
+    maintenance: "🔧",
+    stock_item: "📦",
+    sim: "📶",
+    category: "🏷️",
+    supplier: "🏪",
+  };
+  const typeLabel = {
+    installation: "Installation",
+    maintenance: "Repair",
+    stock_item: "Stock item",
+    sim: "SIM",
+    category: "Category",
+    supplier: "Supplier",
+  };
+
+  app.innerHTML = `
+    ${renderHeader("Deletion Audit Log", "Every delete action across the app, with reason")}
+    <main class="main">
+      ${renderAdminNav("deletions")}
+      <div class="summary-grid">
+        <div class="summary-box"><strong>${log.length}</strong><span>Total deletions</span></div>
+        <div class="summary-box summary-warn"><strong>${counts.installation}</strong><span>Installations</span></div>
+        <div class="summary-box summary-warn"><strong>${counts.maintenance}</strong><span>Repairs</span></div>
+        <div class="summary-box"><strong>${counts.stock_item}</strong><span>Stock items</span></div>
+      </div>
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <h2>All deletions (${log.length})</h2>
+            <p class="section-subtitle">Newest first. This log is immutable — even if the row is deleted from its main table, the deletion record stays here for accountability.</p>
+          </div>
+          ${!deletionLogTableReady ? `<span class="badge badge-warn">deletion_log table missing — run migration</span>` : ""}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Type</th>
+                <th>What was deleted</th>
+                <th>Reason</th>
+                <th>By</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${log.length
+                ? log
+                    .map(
+                      (d) => `
+                        <tr>
+                          <td class="date-cell">${escapeHtml(formatDateTime(d.deletedAt))}</td>
+                          <td>
+                            <span class="cat-pill" title="${escapeHtml(d.entityType)}">
+                              ${typeIcon[d.entityType] || "🗑️"} ${escapeHtml(typeLabel[d.entityType] || d.entityType)}
+                            </span>
+                          </td>
+                          <td class="mono">${escapeHtml(d.entityLabel || d.entityId || "—")}</td>
+                          <td><span class="reason-text">${escapeHtml(d.reason || "—")}</span></td>
+                          <td>${escapeHtml(d.deletedBy || "—")}</td>
+                        </tr>`
+                    )
+                    .join("")
+                : `<tr class="empty-row"><td colspan="5">No deletions recorded yet.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  `;
+  bindAdminNav();
+  bindLogout();
+}
+
 function renderTimeline() {
   const q = timelineQuery.toLowerCase().trim();
   const allInstalls = loadInstallations();
@@ -2797,6 +2990,7 @@ const ADMIN_NAV = [
   { key: "sim-upload", label: "⬆️ SIM Upload", view: "sim-upload" },
   { key: "sim-db", label: "📶 SIM Database", view: "sim-db" },
   { key: "stock", label: "📦 Stock", view: "stock" },
+  { key: "deletions", label: "🗑️ Deletions", view: "deletions" },
   { key: "timeline", label: "📅 Timeline", view: "timeline" },
 ];
 
@@ -4643,12 +4837,25 @@ async function onDeleteStockItem(itemId) {
   const item = loadStockItems().find((i) => i.id === itemId);
   if (!item) return;
 
-  const reason = await promptForDeleteReason(item);
-  if (reason == null) return; // cancelled
+  const reason = await promptForReason({
+    title: "Delete this stock item?",
+    message: `You're about to remove <strong>${escapeHtml(item.name)}</strong>${item.category ? ` (${escapeHtml(item.category)})` : ""} — current stock <strong>${item.quantity} ${escapeHtml(item.unit)}</strong>. This cannot be undone.`,
+    confirmLabel: "Delete item",
+    placeholder: "e.g. wrong entry, damaged, returned to supplier",
+  });
+  if (!reason) return;
 
   renderLoading("Deleting item...");
   try {
-    // 1) Record the deletion as a transaction so audit history persists.
+    // 1) Audit log
+    await auditDeletion({
+      entityType: "stock_item",
+      entityId: item.id,
+      entityLabel: `${item.name}${item.category ? ` (${item.category})` : ""} · ${item.quantity} ${item.unit}`,
+      reason,
+      snapshot: item,
+    });
+    // 2) Record a final transaction so stock history still shows the reason.
     if (stockTxTableReady) {
       try {
         await insertStockTransaction({
@@ -4665,7 +4872,7 @@ async function onDeleteStockItem(itemId) {
         console.warn("Deletion transaction record failed:", txErr);
       }
     }
-    // 2) Delete the row.
+    // 3) Delete the row.
     await deleteStockItem(itemId);
     await refreshAllData();
     render();
@@ -4675,47 +4882,6 @@ async function onDeleteStockItem(itemId) {
     render();
     showToast(err.message || "Delete failed.", true);
   }
-}
-
-function promptForDeleteReason(item) {
-  return new Promise((resolve) => {
-    modal.innerHTML = `
-      <h3>🗑️ Delete this item?</h3>
-      <p class="modal-desc">You're about to remove <strong>${escapeHtml(item.name)}</strong>${item.category ? ` (${escapeHtml(item.category)})` : ""} — current stock <strong>${item.quantity} ${escapeHtml(item.unit)}</strong>. This cannot be undone.</p>
-      <div class="field">
-        <label for="delReason">Reason for deletion <span class="required">*</span></label>
-        <input type="text" id="delReason" autocomplete="off" placeholder="e.g. wrong entry, damaged, returned to supplier" />
-        <p class="hint">The reason will be recorded in the stock audit history for accountability.</p>
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn btn-secondary" data-act="cancel">Cancel</button>
-        <button type="button" class="btn btn-danger" data-act="confirm">Delete</button>
-      </div>
-    `;
-    modalOverlay.classList.remove("hidden");
-    const input = modal.querySelector("#delReason");
-    input?.focus();
-
-    const done = (val) => {
-      closeModal();
-      resolve(val);
-    };
-    modal.querySelector('[data-act="cancel"]').onclick = () => done(null);
-    modal.querySelector('[data-act="confirm"]').onclick = () => {
-      const v = (input.value || "").trim();
-      if (!v) {
-        showToast("Please enter a reason for deletion.", true);
-        return;
-      }
-      done(v);
-    };
-    input?.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") done(null);
-    });
-    modalOverlay.onclick = (e) => {
-      if (e.target === modalOverlay) done(null);
-    };
-  });
 }
 
 function openCategoryManager() {
@@ -4930,6 +5096,9 @@ function render() {
       break;
     case "stock":
       renderStockPage();
+      break;
+    case "deletions":
+      renderDeletionsPage();
       break;
     case "timeline":
       renderTimeline();
