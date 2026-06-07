@@ -3367,3 +3367,59 @@ tr.empty-row td {
   }
   .stat-chip-num { font-size: 1rem; }
 }
+
+/* ============================================================
+   v1.11 — Deleted entries strikethrough (Akash's "My Entries")
+   ============================================================ */
+
+.akash-row-deleted td {
+  background: linear-gradient(135deg, #fef2f2 0%, #fff5f5 100%);
+  color: var(--text-muted);
+  position: relative;
+}
+
+.akash-row-deleted s {
+  text-decoration: line-through;
+  text-decoration-color: #ef4444;
+  text-decoration-thickness: 1.5px;
+  color: #6b7280;
+}
+
+.badge-deleted {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  margin-left: 0.3rem;
+}
+
+.badge.faded {
+  opacity: 0.55;
+  filter: grayscale(40%);
+}
+
+.deleted-reason {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: #991b1b;
+  font-style: italic;
+  font-family: var(--font-mono);
+  background: rgba(239, 68, 68, 0.06);
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  border-left: 2px solid #ef4444;
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.deleted-on {
+  font-size: 0.72rem;
+  color: #b91c1c;
+  font-weight: 600;
+  white-space: nowrap;
+}
