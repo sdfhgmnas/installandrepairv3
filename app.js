@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "1.10.0";
+const APP_VERSION = "1.11.0";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -1737,38 +1737,100 @@ function renderAkashHome() {
               </tr>
             </thead>
             <tbody>
-              ${
-                [...myInstallations.map((inst) => ({
-                  id: inst.id,
-                  kind: "install",
-                  date: inst.createdAt,
-                  type: "Installation",
-                  vehicle: inst.vehicleNo,
-                  detail: getCurrentImei(inst),
-                })), ...myMaintenance.map((record) => ({
-                  id: record.id,
-                  kind: "repair",
-                  date: record.createdAt,
-                  type: "Repair",
-                  vehicle: record.vehicleNo,
-                  detail: workLabels(record),
-                }))]
-                  .sort((a, b) => new Date(b.date) - new Date(a.date))
-                  .slice(0, 12)
-                  .map((entry) => `
-                    <tr>
-                      <td class="date-cell">${escapeHtml(formatDateTime(entry.date))}</td>
-                      <td><span class="badge ${entry.type === "Installation" ? "badge-ok" : "badge-repair"}">${escapeHtml(entry.type)}</span></td>
-                      <td>${escapeHtml(entry.vehicle)}</td>
-                      <td>${escapeHtml(entry.detail)}</td>
-                      <td class="row-actions">
-                        <button type="button" class="btn btn-outline btn-sm akash-edit" data-kind="${entry.kind}" data-id="${escapeHtml(entry.id)}">✎ Edit</button>
-                        <button type="button" class="btn btn-danger btn-sm akash-delete" data-kind="${entry.kind}" data-id="${escapeHtml(entry.id)}">Delete</button>
-                      </td>
-                    </tr>
-                  `)
-                  .join("") || `<tr class="empty-row"><td colspan="5">No entries from Akash yet.</td></tr>`
-              }
+              ${(() => {
+                // Build live entries + deletion stubs (so Akash can see
+                // his own deletions with a strikethrough and reason).
+                const myDeletions = deletionLog.filter(
+                  (d) =>
+                    d.deletedBy === "akash" &&
+                    (d.entityType === "installation" || d.entityType === "maintenance")
+                );
+                const entries = [
+                  ...myInstallations.map((inst) => ({
+                    id: inst.id,
+                    kind: "install",
+                    deleted: false,
+                    date: inst.createdAt,
+                    type: "Installation",
+                    vehicle: inst.vehicleNo,
+                    detail: getCurrentImei(inst),
+                  })),
+                  ...myMaintenance.map((record) => ({
+                    id: record.id,
+                    kind: "repair",
+                    deleted: false,
+                    date: record.createdAt,
+                    type: "Repair",
+                    vehicle: record.vehicleNo,
+                    detail: workLabels(record),
+                  })),
+                  ...myDeletions.map((d) => {
+                    const snap = d.snapshot || {};
+                    const isInstall = d.entityType === "installation";
+                    const detail = isInstall
+                      ? (snap.imeiHistory?.find?.((h) => h.active)?.value ||
+                          snap.imeiHistory?.[0]?.value ||
+                          "—")
+                      : (snap.simChange || snap.deviceChange || snap.deviceOutForRepair || snap.sensorOutForRepair
+                          ? [
+                              snap.simChange ? "SIM" : null,
+                              snap.deviceChange ? "Device" : null,
+                              snap.deviceOutForRepair ? "Device→Service" : null,
+                              snap.sensorOutForRepair ? "Sensor→Service" : null,
+                            ].filter(Boolean).join(" · ")
+                          : snap.otherWorkText || "Repair");
+                    return {
+                      id: d.id,
+                      kind: isInstall ? "install" : "repair",
+                      deleted: true,
+                      date: d.deletedAt,
+                      type: isInstall ? "Installation" : "Repair",
+                      vehicle: snap.vehicleNo || (d.entityLabel || "").split(" ")[0] || "—",
+                      detail,
+                      reason: d.reason || "",
+                      originalDate: snap.createdAt || null,
+                    };
+                  }),
+                ];
+                entries.sort((a, b) => new Date(b.date) - new Date(a.date));
+                const sliced = entries.slice(0, 15);
+                if (!sliced.length) return `<tr class="empty-row"><td colspan="5">No entries from Akash yet.</td></tr>`;
+                return sliced
+                  .map((entry) => {
+                    if (entry.deleted) {
+                      return `
+                        <tr class="akash-row-deleted">
+                          <td class="date-cell"><s>${escapeHtml(formatDateTime(entry.originalDate || entry.date))}</s></td>
+                          <td>
+                            <span class="badge ${entry.type === "Installation" ? "badge-ok" : "badge-repair"} faded">${escapeHtml(entry.type)}</span>
+                            <span class="badge badge-deleted">🗑️ DELETED</span>
+                          </td>
+                          <td><s>${escapeHtml(entry.vehicle)}</s></td>
+                          <td>
+                            <s>${escapeHtml(entry.detail)}</s>
+                            ${entry.reason ? `<div class="deleted-reason">Reason: ${escapeHtml(entry.reason)}</div>` : ""}
+                          </td>
+                          <td class="row-actions">
+                            <span class="deleted-on">Deleted ${escapeHtml(formatDateTime(entry.date))}</span>
+                          </td>
+                        </tr>
+                      `;
+                    }
+                    return `
+                      <tr>
+                        <td class="date-cell">${escapeHtml(formatDateTime(entry.date))}</td>
+                        <td><span class="badge ${entry.type === "Installation" ? "badge-ok" : "badge-repair"}">${escapeHtml(entry.type)}</span></td>
+                        <td>${escapeHtml(entry.vehicle)}</td>
+                        <td>${escapeHtml(entry.detail)}</td>
+                        <td class="row-actions">
+                          <button type="button" class="btn btn-outline btn-sm akash-edit" data-kind="${entry.kind}" data-id="${escapeHtml(entry.id)}">✎ Edit</button>
+                          <button type="button" class="btn btn-danger btn-sm akash-delete" data-kind="${entry.kind}" data-id="${escapeHtml(entry.id)}">Delete</button>
+                        </td>
+                      </tr>
+                    `;
+                  })
+                  .join("");
+              })()}
             </tbody>
           </table>
         </div>
