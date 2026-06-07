@@ -3423,3 +3423,50 @@ tr.empty-row td {
   font-weight: 600;
   white-space: nowrap;
 }
+
+/* ============================================================
+   v2.0 — Restructured admin nav (5 primary + footer audit)
+   ============================================================ */
+
+.admin-footer-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: -0.4rem 0 0.85rem;
+  padding: 0.35rem 0 0;
+  font-size: 0.78rem;
+}
+
+.nav-link-sm {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.18rem 0.55rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+
+.nav-link-sm:hover {
+  color: var(--primary);
+  background: var(--surface-2);
+}
+
+.nav-link-sm.active {
+  color: var(--primary);
+  background: var(--primary-ring);
+}
+
+.nav-sep {
+  color: var(--border);
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .admin-footer-nav {
+    font-size: 0.72rem;
+  }
+}
