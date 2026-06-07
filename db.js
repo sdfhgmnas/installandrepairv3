@@ -47,6 +47,7 @@ function rowToInstallation(row) {
     secondarySim: row.secondary_sim || null,
     imeiHistory: row.imei_history || [],
     simHistory: row.sim_history || [],
+    tasks: row.tasks && typeof row.tasks === "object" ? row.tasks : {},
     createdAt: row.created_at,
     createdBy: row.created_by,
   };
@@ -62,6 +63,7 @@ function installationToRow(inst) {
     secondary_sim: inst.secondarySim || null,
     imei_history: inst.imeiHistory,
     sim_history: inst.simHistory,
+    tasks: inst.tasks && typeof inst.tasks === "object" ? inst.tasks : {},
     created_at: inst.createdAt,
     created_by: inst.createdBy,
   };
