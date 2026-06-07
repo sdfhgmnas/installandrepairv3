@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "1.11.0";
+const APP_VERSION = "2.1.0";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -147,7 +147,11 @@ async function consumeStockFor(identifiers, link) {
   }
   if (identifiers.simSecondary) {
     const v = String(identifiers.simSecondary).trim().toLowerCase();
-    matchBy((it) => (it.metadata?.secondary || "").toLowerCase() === v);
+    matchBy(
+      (it) =>
+        (it.metadata?.secondary || "").toLowerCase() === v ||
+        (it.metadata?.primary || "").toLowerCase() === v
+    );
   }
   if (identifiers.sensorNo) {
     const v = String(identifiers.sensorNo).trim().toLowerCase();
@@ -1690,7 +1694,7 @@ function renderAkashHome() {
   const myInstallations = loadInstallations().filter((inst) => inst.createdBy === "akash");
   const myMaintenance = loadMaintenance().filter((record) => record.createdBy === "akash");
   app.innerHTML = `
-    ${renderHeader("Akash Portal", "Select work type")}
+    ${renderHeader("Akash Portal", "Field work — installations & repairs")}
     <main class="main">
       <section class="card">
         <h2>What work are you doing?</h2>
@@ -2126,8 +2130,9 @@ function renderInstallForm() {
             <input type="text" id="instModel" required placeholder="e.g. GT06N" autocomplete="off" />
           </div>
           <div class="field">
-            <label for="instSim">Primary SIM No <span class="required">*</span></label>
-            <input type="text" id="instSim" required placeholder="e.g. 9876543210" autocomplete="off" inputmode="numeric" />
+            <label for="instSim">SIM ICCID (20-digit, printed on the SIM card) <span class="required">*</span></label>
+            <input type="text" id="instSim" required placeholder="e.g. 89918720507069156677" autocomplete="off" inputmode="numeric" />
+            <p class="hint">Wahi number daalo jo SIM card pe printed hai (long 20-digit number). Primary number admin ke SIM database se automatic link ho jaayega.</p>
           </div>
           <div class="field">
             <label for="instMac">MAC ID <span class="required">*</span></label>
@@ -2220,27 +2225,70 @@ function handleInstallSubmit() {
       }
 
       const now = new Date().toISOString();
+
+      // The SIM input is now the SECONDARY (ICCID). Look up the primary from
+      // the sims DB. If found, store the primary as simHistory.value (so
+      // existing display code stays consistent). If unknown, store the ICCID
+      // as a placeholder + secondaryValue, and queue an update_sim_primary
+      // task for admin so they can fill the primary later.
+      const enteredIccid = String(data.sim).trim();
+      const knownSim = sims.find(
+        (s) => (s.secondaryNumber || "").toLowerCase() === enteredIccid.toLowerCase()
+      );
+      const primaryValue = knownSim?.primaryNumber || null;
+      const simHistEntry = {
+        value: primaryValue || enteredIccid,
+        secondaryValue: enteredIccid,
+        addedAt: now,
+        active: true,
+        pendingDeactivation: false,
+      };
+
+      const installTasks = defaultInstallTasks();
+      // If the SIM was unknown OR known but missing primary, also queue
+      // an update_sim_primary install-task so admin sets it from the portal.
+      if (!primaryValue) {
+        installTasks.update_sim_primary = {
+          completedAt: null,
+          completedBy: null,
+          simSecondary: enteredIccid,
+        };
+      }
+
       const newInstall = {
         id: generateId(),
         vehicleNo: data.vehicle,
         gpsModel: data.model,
         macId: data.mac,
         sensorNo: data.sensor,
-        secondarySim: null,
+        secondarySim: enteredIccid,
         imeiHistory: [{ value: data.imei, addedAt: now, active: true }],
-        simHistory: [{ value: data.sim, addedAt: now, active: true, pendingDeactivation: false }],
-        tasks: defaultInstallTasks(),
+        simHistory: [simHistEntry],
+        tasks: installTasks,
         createdAt: now,
         createdBy: "akash",
       };
 
+      // Auto-register the SIM in the sims DB if it wasn't there (primary may
+      // be null — admin fills later via the pending task).
+      if (!knownSim) {
+        try {
+          await upsertSim({
+            primaryNumber: null,
+            secondaryNumber: enteredIccid,
+            notes: `Auto-added from install — ${data.vehicle}`,
+          });
+        } catch (simErr) {
+          console.warn("Auto-register SIM failed:", simErr);
+        }
+      }
+
       const saved = await insertInstallation(newInstall);
-      // Auto-consume matching stock entries (GPS by IMEI, SIM by secondary,
-      // sensor by sensor no / MAC).
+      // Auto-consume matching stock entries.
       await consumeStockFor(
         {
           imei: data.imei,
-          simSecondary: data.sim, // may be a primary 13-digit; harmless if no match
+          simSecondary: enteredIccid,
           sensorNo: data.sensor,
           macId: data.mac,
         },
@@ -3339,26 +3387,30 @@ function renderTimeline() {
    ============================================================ */
 
 const ADMIN_NAV = [
-  { key: "dashboard", label: "📋 Dashboard", view: "dashboard" },
-  { key: "installations", label: "🔧 Installations", view: "installations" },
+  { key: "dashboard", label: "🏠 Home", view: "dashboard" },
+  { key: "installations", label: "🚛 Installations", view: "installations" },
   { key: "repairs", label: "🛠️ Repair Work", view: "repairs" },
-  { key: "pending", label: "⚠️ Pending Work", view: "pending" },
-  { key: "sim-upload", label: "⬆️ SIM Upload", view: "sim-upload" },
+  { key: "pending", label: "⚙️ Repair Progress", view: "pending" },
   { key: "sim-db", label: "📶 SIM Database", view: "sim-db" },
   { key: "stock", label: "📦 Stock", view: "stock" },
-  { key: "deletions", label: "🗑️ Deletions", view: "deletions" },
-  { key: "timeline", label: "📅 Timeline", view: "timeline" },
 ];
 
 function renderAdminNav(activeKey) {
-  return `<div class="admin-nav">${ADMIN_NAV.map(
-    (n) =>
-      `<button type="button" class="nav-pill ${n.key === activeKey ? "active" : ""}" data-nav="${n.view}">${n.label}</button>`
-  ).join("")}</div>`;
+  return `
+    <div class="admin-nav">${ADMIN_NAV.map(
+      (n) =>
+        `<button type="button" class="nav-pill ${n.key === activeKey ? "active" : ""}" data-nav="${n.view}">${n.label}</button>`
+    ).join("")}</div>
+    <div class="admin-footer-nav">
+      <button type="button" class="nav-link-sm ${activeKey === "timeline" ? "active" : ""}" data-nav="timeline">📅 Vehicle Timeline</button>
+      <span class="nav-sep">·</span>
+      <button type="button" class="nav-link-sm ${activeKey === "deletions" ? "active" : ""}" data-nav="deletions">🗑️ Deletion Audit Log${deletionLog.length ? ` (${deletionLog.length})` : ""}</button>
+    </div>
+  `;
 }
 
 function bindAdminNav() {
-  app.querySelectorAll(".nav-pill[data-nav]").forEach((btn) => {
+  app.querySelectorAll("[data-nav]").forEach((btn) => {
     btn.addEventListener("click", () => setView(btn.dataset.nav));
   });
 }
@@ -3468,7 +3520,7 @@ function renderDashboard() {
   }
 
   app.innerHTML = `
-    ${renderHeader("Dashboard", "Fleet operations at a glance")}
+    ${renderHeader("Home", "Fleet operations at a glance")}
     <main class="main">
       ${renderAdminNav("dashboard")}
 
@@ -3535,7 +3587,7 @@ function renderDashboard() {
         <section class="card pending-breakdown-card">
           <div class="section-heading">
             <div>
-              <h2>⚠️ Pending Work — by type</h2>
+              <h2>⚙️ Repair Progress — by type</h2>
               <p class="section-subtitle">Tap any tile to jump to the matching tasks.</p>
             </div>
             <button type="button" class="btn btn-warn btn-sm" data-go="pending">Resolve all →</button>
@@ -3885,7 +3937,7 @@ function renderPendingPage() {
   const pendingHtml = renderPendingActions();
 
   app.innerHTML = `
-    ${renderHeader("Pending Work", `${pendingCount} follow-up actions`)}
+    ${renderHeader("Repair Progress", `${pendingCount} follow-up actions pending`)}
     <main class="main">
       ${renderAdminNav("pending")}
       ${pendingHtml || `<section class="card"><h2>🎉 All caught up</h2><p class="alert-desc">No pending actions right now. New repair entries will show up here automatically.</p></section>`}
@@ -4310,7 +4362,7 @@ function renderSimDb() {
         <div class="section-heading">
           <div>
             <h2>All SIMs (${totalSims})</h2>
-            <p class="section-subtitle">Each SIM card has a primary number (13-digit) and a secondary number (20-digit ICCID). Add SIMs to the database in advance — when Akash uses one in the field, the system auto-links it to a vehicle.</p>
+            <p class="section-subtitle">Each SIM card has a primary number (13-digit, given by telecom) and a secondary number (20-digit ICCID, printed on the card). Akash sees only the ICCID — the system looks up the primary from this database when he saves an entry.</p>
           </div>
           <div class="bulk-actions">
             <button type="button" class="btn btn-secondary btn-sm" id="addSimBtn">+ Add SIM</button>
@@ -4333,10 +4385,6 @@ function renderSimDb() {
   `;
   bindLogout();
   bindAdminNav();
-
-  app.querySelectorAll('[data-nav="sim-upload"]').forEach((btn) => {
-    btn.addEventListener("click", () => setView("sim-upload"));
-  });
 
   const searchEl = document.getElementById("simSearch");
   searchEl?.addEventListener("input", (e) => {
@@ -5051,16 +5099,10 @@ function openStockEditor(itemId, categoryOptions) {
       </div>
     </div>
 
-    <div class="field-row">
-      <div class="field">
-        <label for="stkCost">Cost per unit (₹)</label>
-        <input type="number" id="stkCost" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="optional" value="${item?.costPerUnit ?? ""}" class="mono" />
-      </div>
-      <div class="field low-stock-field" id="lowStockField">
-        <label for="stkLow">Low-stock alert at</label>
-        <input type="number" id="stkLow" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="5" value="${item?.lowStockThreshold ?? 5}" class="mono" />
-        <p class="hint">Only used for bulk consumables (rolls, tape, drill bits).</p>
-      </div>
+    <div class="field low-stock-field" id="lowStockField">
+      <label for="stkLow">Low-stock alert at</label>
+      <input type="number" id="stkLow" inputmode="decimal" min="0" step="any" autocomplete="off" placeholder="5" value="${item?.lowStockThreshold ?? 5}" class="mono" />
+      <p class="hint">Only used for bulk consumables (rolls, tape, drill bits).</p>
     </div>
     <div class="field">
       <label for="stkSupplier">Supplier</label>
@@ -5071,7 +5113,7 @@ function openStockEditor(itemId, categoryOptions) {
     </div>
     <div class="field">
       <label for="stkNotes">Notes (optional)</label>
-      <input type="text" id="stkNotes" autocomplete="off" placeholder="e.g. supplier, batch, location" value="${escapeHtml(item?.notes || "")}" />
+      <input type="text" id="stkNotes" autocomplete="off" placeholder="e.g. batch, storage location, condition" value="${escapeHtml(item?.notes || "")}" />
     </div>
     <div class="modal-actions">
       <button type="button" class="btn btn-secondary" data-act="cancel">Cancel</button>
@@ -5265,7 +5307,6 @@ function openStockEditor(itemId, categoryOptions) {
     const category = categoryEl.value.trim() || null;
     const unit = modal.querySelector("#stkUnit").value.trim() || "pcs";
     const qtyRaw = modal.querySelector("#stkQty").value;
-    const costRaw = modal.querySelector("#stkCost").value;
     const lowRaw = modal.querySelector("#stkLow").value;
     const notes = modal.querySelector("#stkNotes").value.trim() || null;
     const supplier = modal.querySelector("#stkSupplier")?.value.trim() || null;
@@ -5389,7 +5430,7 @@ function openStockEditor(itemId, categoryOptions) {
         category,
         unit,
         quantity,
-        costPerUnit: costRaw === "" ? null : Number(costRaw),
+        costPerUnit: null,
         // Trackable categories don't use the low-stock concept; force null.
         lowStockThreshold: isTrackableCategory(category)
           ? null
