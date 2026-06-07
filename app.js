@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "1.9.0";
+const APP_VERSION = "1.10.0";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -231,6 +231,7 @@ async function restoreStockFor({ installationId, maintenanceRecordId, reason }) 
 
 const TASK_TYPES = {
   update_portal: { label: "Update on GPS Portal", icon: "🖥️", category: "Portal" },
+  update_vehicle_number: { label: "Check and update vehicle number", icon: "🚛", category: "Vehicle" },
   deactivate_sim: { label: "Deactivate the SIM", icon: "📵", category: "SIM" },
   repair_device: { label: "Repair the Device", icon: "🔧", category: "Device" },
   repair_sensor: { label: "Repair the Sensor", icon: "🛰️", category: "Sensor" },
@@ -239,6 +240,7 @@ const TASK_TYPES = {
 
 const TASK_ORDER = [
   "update_portal",
+  "update_vehicle_number",
   "deactivate_sim",
   "update_sim_primary",
   "repair_device",
@@ -313,29 +315,87 @@ function getTasks(record) {
   }));
 }
 
+// Install-level tasks: every new installation must be marked as
+// "Updated on GPS Portal" and "Vehicle number checked & updated" by admin.
+const INSTALL_TASK_TYPES = ["update_portal", "update_vehicle_number"];
+
+function defaultInstallTasks() {
+  const t = {};
+  for (const type of INSTALL_TASK_TYPES) {
+    t[type] = { completedAt: null, completedBy: null };
+  }
+  return t;
+}
+
+// Get a normalised tasks object for an installation. Legacy rows that
+// predate the feature (tasks=null/{}) get default tasks generated lazily.
+function getInstallTasks(inst) {
+  if (inst.tasks && typeof inst.tasks === "object" && Object.keys(inst.tasks).length) {
+    return inst.tasks;
+  }
+  return defaultInstallTasks();
+}
+
+function isInstallTaskDone(inst, type) {
+  const t = getInstallTasks(inst)[type];
+  return Boolean(t && t.completedAt);
+}
+
 function getPendingActionRows() {
   const rows = [];
+  // Maintenance / repair tasks
   for (const record of loadMaintenance()) {
     for (const task of getTasks(record)) {
-      if (!isTaskDone(task)) rows.push({ record, task });
+      if (!isTaskDone(task)) rows.push({ kind: "maintenance", record, task });
     }
   }
-  rows.sort((a, b) => new Date(b.record.createdAt) - new Date(a.record.createdAt));
+  // Install-level tasks (Update on Portal + Vehicle number check)
+  for (const inst of loadInstallations()) {
+    const tasks = getInstallTasks(inst);
+    for (const type of INSTALL_TASK_TYPES) {
+      const t = tasks[type];
+      if (!t || !t.completedAt) {
+        rows.push({
+          kind: "installation",
+          install: inst,
+          task: { id: `inst-${inst.id}-${type}`, type, done: false, completedAt: null },
+        });
+      }
+    }
+  }
+  rows.sort((a, b) => {
+    const aDate = new Date(a.kind === "installation" ? a.install.createdAt : a.record.createdAt);
+    const bDate = new Date(b.kind === "installation" ? b.install.createdAt : b.record.createdAt);
+    return bDate - aDate;
+  });
   return rows;
 }
 
-function taskDetail(record, task) {
-  const inst = loadInstallations().find((i) => i.id === record.installationId);
+function taskDetail(record, task, kind) {
   const mono = (v) => `<span class="mono">${escapeHtml(v || "—")}</span>`;
+  // Install-level tasks: the record IS the install (pseudo-record).
+  if (kind === "installation") {
+    const inst = loadInstallations().find((i) => i.id === record.id);
+    switch (task.type) {
+      case "update_portal":
+        return `New install — IMEI ${mono(inst ? getCurrentImei(inst) : "")} · SIM ${mono(inst ? resolvePrimarySim(getCurrentSim(inst)) : "")}`;
+      case "update_vehicle_number":
+        return `Vehicle entered: ${mono(record.vehicleNo)} — confirm correctness with portal`;
+      default:
+        return "—";
+    }
+  }
+  // Maintenance tasks
+  const inst = loadInstallations().find((i) => i.id === record.installationId);
   switch (task.type) {
     case "update_portal": {
       const bits = [];
-      if (record.simChange && record.newSimNo) bits.push(`SIM → ${mono(record.newSimNo)}`);
+      if (record.simChange && record.newSimNo) bits.push(`SIM → ${mono(resolvePrimarySim(record.newSimNo))}`);
       if (record.deviceChange && record.newImei) bits.push(`IMEI → ${mono(record.newImei)}`);
       return bits.length ? bits.join(" · ") : "—";
     }
     case "deactivate_sim":
-      return `Old SIM ${mono(record.oldSimNo)}`;
+      return `Old SIM ${mono(resolvePrimarySim(record.oldSimNo))}`;
     case "repair_device":
       return `Device ${mono(record.oldImei || record.imei || (inst ? getCurrentImei(inst) : ""))}`;
     case "repair_sensor":
@@ -345,6 +405,23 @@ function taskDetail(record, task) {
     default:
       return "—";
   }
+}
+
+// Look up the resolved PRIMARY number for a given value. If the value is
+// a known secondary (ICCID), return the primary from the sims table;
+// otherwise return the value as-is. Returns "" if nothing found.
+function resolvePrimarySim(value) {
+  if (!value) return "";
+  const v = String(value).trim();
+  if (!v) return "";
+  // If value is already a primary (matches a sim's primaryNumber), return it.
+  const byPri = sims.find((s) => (s.primaryNumber || "").toLowerCase() === v.toLowerCase());
+  if (byPri) return byPri.primaryNumber;
+  // If value is a secondary (ICCID), look up the primary.
+  const bySec = sims.find((s) => (s.secondaryNumber || "").toLowerCase() === v.toLowerCase());
+  if (bySec && bySec.primaryNumber) return bySec.primaryNumber;
+  // Unknown — return original.
+  return v;
 }
 
 function taskDetailText(record, task) {
@@ -624,6 +701,123 @@ async function undoTask(recordId, taskId) {
     render();
     showToast(err.message || "Failed to undo task.", true);
   }
+}
+
+/* ============================================================
+   INSTALL-LEVEL TASK HANDLERS
+   For install tasks (Update on Portal, Check vehicle no), the
+   completion state lives on installations.tasks[type].
+   Task ID format: `inst-{installId}-{taskType}`.
+   ============================================================ */
+
+function parseInstallTaskId(taskId) {
+  // "inst-{installId}-{taskType}" — installId is a UUID with hyphens,
+  // so we identify the type by suffix.
+  for (const type of INSTALL_TASK_TYPES) {
+    const suffix = `-${type}`;
+    if (taskId.endsWith(suffix) && taskId.startsWith("inst-")) {
+      const installId = taskId.slice("inst-".length, -suffix.length);
+      return { installId, type };
+    }
+  }
+  return null;
+}
+
+async function completeInstallTask(installId, taskId) {
+  const parsed = parseInstallTaskId(taskId);
+  if (!parsed) return;
+  const inst = loadInstallations().find((i) => i.id === installId);
+  if (!inst) return;
+  const now = new Date().toISOString();
+  const tasks = { ...getInstallTasks(inst) };
+  tasks[parsed.type] = {
+    ...(tasks[parsed.type] || {}),
+    completedAt: now,
+    completedBy: currentUser || "admin",
+  };
+  inst.tasks = tasks;
+  render();
+  try {
+    await updateInstallation(inst);
+    showToast("Marked complete.");
+    await refreshAllData();
+    render();
+  } catch (err) {
+    showToast(err.message || "Failed to mark complete.", true);
+    await refreshAllData();
+    render();
+  }
+}
+
+async function undoInstallTask(installId, taskId) {
+  const parsed = parseInstallTaskId(taskId);
+  if (!parsed) return;
+  const inst = loadInstallations().find((i) => i.id === installId);
+  if (!inst) return;
+  const tasks = { ...getInstallTasks(inst) };
+  tasks[parsed.type] = {
+    ...(tasks[parsed.type] || {}),
+    completedAt: null,
+    completedBy: null,
+  };
+  inst.tasks = tasks;
+  render();
+  try {
+    await updateInstallation(inst);
+    showToast("Reopened.");
+    await refreshAllData();
+    render();
+  } catch (err) {
+    showToast(err.message || "Failed to undo.", true);
+    await refreshAllData();
+    render();
+  }
+}
+
+function openInstallRemarkEditor(installId, taskId) {
+  const parsed = parseInstallTaskId(taskId);
+  if (!parsed) return;
+  const inst = loadInstallations().find((i) => i.id === installId);
+  if (!inst) return;
+  const tasks = getInstallTasks(inst);
+  const existing = tasks[parsed.type] || {};
+  const flow = taskFlow(parsed.type);
+
+  modal.innerHTML = `
+    <h3>📝 Remark for "${escapeHtml(flow.label)}"</h3>
+    <p class="modal-desc">Vehicle <strong class="mono">${escapeHtml(inst.vehicleNo)}</strong></p>
+    <div class="field">
+      <label for="remarkText">Remark</label>
+      <input type="text" id="remarkText" autocomplete="off" value="${escapeHtml(existing.remark || "")}" placeholder="Add a note..." />
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" data-act="cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" data-act="save">Save</button>
+    </div>
+  `;
+  modalOverlay.classList.remove("hidden");
+  modalOverlay.onclick = (e) => { if (e.target === modalOverlay) closeModal(); };
+  modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+  modal.querySelector('[data-act="save"]').onclick = async () => {
+    const text = modal.querySelector("#remarkText").value.trim();
+    closeModal();
+    const newTasks = { ...tasks };
+    newTasks[parsed.type] = {
+      ...(tasks[parsed.type] || {}),
+      remark: text || null,
+      remarkBy: text ? (currentUser || "admin") : null,
+      remarkAt: text ? new Date().toISOString() : null,
+    };
+    inst.tasks = newTasks;
+    try {
+      await updateInstallation(inst);
+      await refreshAllData();
+      render();
+      showToast(text ? "Remark saved." : "Remark cleared.");
+    } catch (err) {
+      showToast(err.message || "Save failed.", true);
+    }
+  };
 }
 
 async function setTaskRemark(recordId, taskId, remarkText) {
@@ -1973,6 +2167,7 @@ function handleInstallSubmit() {
         secondarySim: null,
         imeiHistory: [{ value: data.imei, addedAt: now, active: true }],
         simHistory: [{ value: data.sim, addedAt: now, active: true, pendingDeactivation: false }],
+        tasks: defaultInstallTasks(),
         createdAt: now,
         createdBy: "akash",
       };
@@ -2457,6 +2652,7 @@ async function importInstallations(file) {
       secondarySim: row.secondary_sim || null,
       imeiHistory: [{ value: imei, addedAt: createdAt, active: true }],
       simHistory: [{ value: simNo, addedAt: createdAt, active: true, pendingDeactivation: false }],
+      tasks: defaultInstallTasks(),
       createdAt,
       createdBy: row.created_by || "admin",
     };
@@ -2664,6 +2860,45 @@ function renderPendingActions() {
   // Every task (pending + completed), grouped by vehicle.
   const groupsMap = new Map();
   let anyTask = false;
+
+  // Include install-level tasks (Update on Portal + Vehicle number check)
+  for (const inst of loadInstallations()) {
+    const tasks = getInstallTasks(inst);
+    for (const type of INSTALL_TASK_TYPES) {
+      anyTask = true;
+      const tState = tasks[type] || { completedAt: null };
+      const task = {
+        id: `inst-${inst.id}-${type}`,
+        type,
+        done: Boolean(tState.completedAt),
+        completedAt: tState.completedAt || null,
+        completedBy: tState.completedBy || null,
+        remark: tState.remark || null,
+        remarkBy: tState.remarkBy || null,
+      };
+      const key = inst.id;
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, {
+          vehicleNo: inst.vehicleNo,
+          installationId: inst.id,
+          latest: inst.createdAt,
+          items: [],
+        });
+      }
+      const g = groupsMap.get(key);
+      // Pseudo-record for the install task, carrying the install info.
+      const pseudoRecord = {
+        id: inst.id,
+        vehicleNo: inst.vehicleNo,
+        installationId: inst.id,
+        createdAt: inst.createdAt,
+      };
+      g.items.push({ kind: "installation", record: pseudoRecord, task });
+      if (new Date(inst.createdAt) > new Date(g.latest)) g.latest = inst.createdAt;
+    }
+  }
+
+  // Maintenance / repair tasks
   for (const record of loadMaintenance()) {
     for (const task of getTasks(record)) {
       anyTask = true;
@@ -2677,13 +2912,13 @@ function renderPendingActions() {
         });
       }
       const g = groupsMap.get(key);
-      g.items.push({ record, task });
+      g.items.push({ kind: "maintenance", record, task });
       if (new Date(record.createdAt) > new Date(g.latest)) g.latest = record.createdAt;
     }
   }
   if (!anyTask) return "";
 
-  const counts = { Portal: 0, SIM: 0, Device: 0, Sensor: 0 };
+  const counts = { Portal: 0, SIM: 0, Device: 0, Sensor: 0, Vehicle: 0 };
   getPendingActionRows().forEach((r) => {
     const cat = taskFlow(r.task.type)?.category;
     if (cat in counts) counts[cat] += 1;
@@ -2708,27 +2943,28 @@ function renderPendingActions() {
   let visibleGroups = groups.filter((g) => showCompleted || g.items.some((it) => !isTaskDone(it.task)));
   visibleGroups.sort((a, b) => new Date(b.latest) - new Date(a.latest));
 
-  const taskRow = (record, task) => {
+  const taskRow = (record, task, kind) => {
     const flow = taskFlow(task.type);
     const done = isTaskDone(task);
+    const dataKind = ` data-kind="${kind}"`;
     const action = done
       ? `<div class="vg-task-done">
            <span class="badge badge-ok">✓ Completed${task.completedAt ? " · " + escapeHtml(formatDateTime(task.completedAt)) : ""}</span>
-           <button type="button" class="btn btn-outline btn-sm task-undo" data-record="${record.id}" data-task="${escapeHtml(task.id)}">↩ Undo</button>
+           <button type="button" class="btn btn-outline btn-sm task-undo" data-record="${record.id}" data-task="${escapeHtml(task.id)}"${dataKind}>↩ Undo</button>
          </div>`
       : `<div class="vg-task-pending">
            <span class="badge badge-warn">Pending</span>
-           <button type="button" class="btn btn-primary btn-sm task-complete" data-record="${record.id}" data-task="${escapeHtml(task.id)}">✓ Complete</button>
+           <button type="button" class="btn btn-primary btn-sm task-complete" data-record="${record.id}" data-task="${escapeHtml(task.id)}"${dataKind}>✓ Complete</button>
          </div>`;
     const remarkLine = task.remark
       ? `<div class="vg-task-remark has-remark">
            <span class="remark-icon">📝</span>
            <span class="remark-text">${escapeHtml(task.remark)}</span>
            ${task.remarkBy ? `<span class="remark-meta">— ${escapeHtml(task.remarkBy)}</span>` : ""}
-           <button type="button" class="remark-btn task-remark" data-record="${record.id}" data-task="${escapeHtml(task.id)}">Edit</button>
+           <button type="button" class="remark-btn task-remark" data-record="${record.id}" data-task="${escapeHtml(task.id)}"${dataKind}>Edit</button>
          </div>`
       : `<div class="vg-task-remark">
-           <button type="button" class="remark-btn task-remark" data-record="${record.id}" data-task="${escapeHtml(task.id)}">+ Add remark</button>
+           <button type="button" class="remark-btn task-remark" data-record="${record.id}" data-task="${escapeHtml(task.id)}"${dataKind}>+ Add remark</button>
          </div>`;
     return `
       <div class="vg-task ${done ? "is-done" : ""}">
@@ -2736,7 +2972,7 @@ function renderPendingActions() {
           <div class="vg-task-main">
             <span class="action-icon">${flow.icon}</span>
             <span class="vg-task-label">${escapeHtml(flow.label)}</span>
-            <span class="vg-task-detail">${taskDetail(record, task)}</span>
+            <span class="vg-task-detail">${taskDetail(record, task, kind)}</span>
             <span class="vg-task-date">${escapeHtml(formatDateTime(record.createdAt))}</span>
           </div>
           ${remarkLine}
@@ -2756,7 +2992,7 @@ function renderPendingActions() {
       const pendingItems = g.items.filter((it) => !isTaskDone(it.task));
       const doneItems = g.items.filter((it) => isTaskDone(it.task));
       const ordered = [...pendingItems, ...doneItems];
-      const tasksHtml = ordered.map(({ record, task }) => taskRow(record, task)).join("");
+      const tasksHtml = ordered.map(({ kind, record, task }) => taskRow(record, task, kind)).join("");
       const doneBadge = doneItems.length ? `<span class="vg-count done">${doneItems.length} done</span>` : "";
       const pendBadge = pendingItems.length
         ? `<span class="vg-count">${pendingItems.length} pending</span>`
@@ -3399,26 +3635,34 @@ function renderInstallationsPage() {
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Date</th><th>Vehicle</th><th>GPS Model</th><th>MAC ID</th><th>Sensor</th><th>IMEI History</th><th>SIM History</th><th></th></tr></thead>
+            <thead><tr><th>Date</th><th>Vehicle</th><th>GPS Model</th><th>Primary SIM</th><th>MAC ID</th><th>Sensor</th><th>IMEI History</th><th>SIM History</th><th></th></tr></thead>
             <tbody>
               ${
                 filtered.length
                   ? filtered
-                      .map(
-                        (i) => `
+                      .map((i) => {
+                        const currentSim = getCurrentSim(i);
+                        const resolved = resolvePrimarySim(currentSim);
+                        const isPending = currentSim && resolved === currentSim && !sims.find((s) => (s.primaryNumber || "").toLowerCase() === currentSim.toLowerCase());
+                        // Pending primary if simHistory value is a 20-digit ICCID
+                        // and we couldn't find a matching primary in the sims table.
+                        const looksIccid = currentSim && digitsOnly(currentSim).length >= 18;
+                        const pendingPill = looksIccid ? `<span class="badge badge-warn" title="Primary not yet known — admin needs to fill it via Pending Work">pending primary</span>` : "";
+                        return `
                 <tr>
                   <td class="date-cell">${escapeHtml(formatDateTime(i.createdAt))}</td>
                   <td>${escapeHtml(i.vehicleNo)}</td>
                   <td>${escapeHtml(i.gpsModel)}</td>
+                  <td class="mono">${escapeHtml(resolved || "—")} ${pendingPill}</td>
                   <td class="mono">${escapeHtml(i.macId)}</td>
                   <td class="mono">${escapeHtml(i.sensorNo)}</td>
                   <td class="history-cell">${historyList(i.imeiHistory)}</td>
                   <td class="history-cell">${simHistoryCell(i)}</td>
                   <td><button type="button" class="btn btn-outline btn-sm edit-btn" data-id="${i.id}">Edit</button></td>
-                </tr>`
-                      )
+                </tr>`;
+                      })
                       .join("")
-                  : `<tr class="empty-row"><td colspan="8">No installations found.</td></tr>`
+                  : `<tr class="empty-row"><td colspan="9">No installations found.</td></tr>`
               }
             </tbody>
           </table>
@@ -3596,13 +3840,31 @@ function renderPendingPage() {
     });
   });
   app.querySelectorAll(".task-complete").forEach((btn) => {
-    btn.addEventListener("click", () => completeTask(btn.dataset.record, btn.dataset.task));
+    btn.addEventListener("click", () => {
+      if (btn.dataset.kind === "installation") {
+        completeInstallTask(btn.dataset.record, btn.dataset.task);
+      } else {
+        completeTask(btn.dataset.record, btn.dataset.task);
+      }
+    });
   });
   app.querySelectorAll(".task-undo").forEach((btn) => {
-    btn.addEventListener("click", () => undoTask(btn.dataset.record, btn.dataset.task));
+    btn.addEventListener("click", () => {
+      if (btn.dataset.kind === "installation") {
+        undoInstallTask(btn.dataset.record, btn.dataset.task);
+      } else {
+        undoTask(btn.dataset.record, btn.dataset.task);
+      }
+    });
   });
   app.querySelectorAll(".task-remark").forEach((btn) => {
-    btn.addEventListener("click", () => openRemarkEditor(btn.dataset.record, btn.dataset.task));
+    btn.addEventListener("click", () => {
+      if (btn.dataset.kind === "installation") {
+        openInstallRemarkEditor(btn.dataset.record, btn.dataset.task);
+      } else {
+        openRemarkEditor(btn.dataset.record, btn.dataset.task);
+      }
+    });
   });
   document.getElementById("toggleCompleted")?.addEventListener("click", () => {
     showCompleted = !showCompleted;
