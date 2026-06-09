@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -235,11 +235,11 @@ async function restoreStockFor({ installationId, maintenanceRecordId, reason }) 
 
 const TASK_TYPES = {
   update_portal: { label: "Update on GPS Portal", icon: "🖥️", category: "Portal" },
-  update_vehicle_number: { label: "Check and update vehicle number", icon: "🚛", category: "Vehicle" },
-  deactivate_sim: { label: "Deactivate the SIM", icon: "📵", category: "SIM" },
-  repair_device: { label: "Repair the Device", icon: "🔧", category: "Device" },
-  repair_sensor: { label: "Repair the Sensor", icon: "🛰️", category: "Sensor" },
-  update_sim_primary: { label: "Update primary number for SIM", icon: "📞", category: "SIM" },
+  update_vehicle_number: { label: "Check and update vehicle number", icon: "🚛", category: "Portal" },
+  update_sim_primary: { label: "Update primary number for SIM", icon: "📞", category: "Portal" },
+  deactivate_sim: { label: "Deactivate the old SIM", icon: "📵", category: "SIM" },
+  repair_device: { label: "Send device for repair", icon: "🔧", category: "Service" },
+  repair_sensor: { label: "Send sensor for repair", icon: "🛰️", category: "Service" },
 };
 
 const TASK_ORDER = [
@@ -3028,7 +3028,7 @@ function renderPendingActions() {
   }
   if (!anyTask) return "";
 
-  const counts = { Portal: 0, SIM: 0, Device: 0, Sensor: 0, Vehicle: 0 };
+  const counts = { Portal: 0, SIM: 0, Service: 0 };
   getPendingActionRows().forEach((r) => {
     const cat = taskFlow(r.task.type)?.category;
     if (cat in counts) counts[cat] += 1;
@@ -3139,10 +3139,9 @@ function renderPendingActions() {
       </div>
       <div class="pending-filter">
         ${chip("all", `All ${totalPending}`)}
-        ${chip("Portal", `GPS Portal ${counts.Portal}`)}
-        ${chip("SIM", `SIM ${counts.SIM}`)}
-        ${chip("Device", `Device ${counts.Device}`)}
-        ${chip("Sensor", `Sensor ${counts.Sensor}`)}
+        ${chip("Portal", `🖥️ Portal ${counts.Portal}`)}
+        ${chip("SIM", `📵 SIM Deactivate ${counts.SIM}`)}
+        ${chip("Service", `🔧 Service ${counts.Service}`)}
         <button type="button" class="filter-chip toggle-chip ${showCompleted ? "active" : ""}" id="toggleCompleted">
           ${showCompleted ? "✓ " : ""}Show completed
         </button>
@@ -3257,6 +3256,59 @@ function renderDeletionsPage() {
   `;
   bindAdminNav();
   bindLogout();
+}
+
+function openVehicleTimelineModal(installationId) {
+  const inst = loadInstallations().find((i) => i.id === installationId);
+  if (!inst) return;
+  const events = buildVehicleTimeline(inst);
+  const eventsHtml = events
+    .map((ev) => {
+      if (ev.type === "install") {
+        const i = ev.inst;
+        const primary = resolvePrimarySim(getCurrentSim(i));
+        const detail = `IMEI ${i.imeiHistory[0]?.value || "—"} · SIM ${primary || i.simHistory[0]?.value || "—"} · ${escapeHtml(i.gpsModel)} · MAC ${escapeHtml(i.macId)} · Sensor ${escapeHtml(i.sensorNo)}`;
+        return `
+          <li class="tl-event tl-install">
+            <span class="tl-dot"></span>
+            <div class="tl-body">
+              <div class="tl-title"><span class="badge badge-ok">Installed</span></div>
+              <div class="tl-detail">${detail}</div>
+              <div class="tl-date">${escapeHtml(formatDateTime(ev.date))}${ev.by ? " · by " + escapeHtml(ev.by) : ""}</div>
+            </div>
+          </li>`;
+      }
+      const m = ev.record;
+      return `
+        <li class="tl-event tl-repair">
+          <span class="tl-dot"></span>
+          <div class="tl-body">
+            <div class="tl-title"><span class="badge badge-repair">Repair</span></div>
+            <div class="tl-detail">${escapeHtml(workLabels(m))}${m.otherWorkText ? " · " + escapeHtml(m.otherWorkText) : ""}</div>
+            <div class="tl-date">${escapeHtml(formatDateTime(ev.date))}${m.createdBy ? " · by " + escapeHtml(m.createdBy) : ""}</div>
+          </div>
+        </li>`;
+    })
+    .join("");
+
+  modal.innerHTML = `
+    <h3>📅 Timeline · <span class="mono">${escapeHtml(inst.vehicleNo)}</span></h3>
+    <p class="modal-desc">${events.length} event${events.length === 1 ? "" : "s"} — newest at the bottom.</p>
+    <div class="tl-modal-body">
+      <ul class="tl-events">${eventsHtml || `<li class="muted">No events recorded.</li>`}</ul>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" data-act="close">Close</button>
+    </div>
+  `;
+  modal.classList.add("modal-wide");
+  modalOverlay.classList.remove("hidden");
+  const onClose = () => {
+    modal.classList.remove("modal-wide");
+    closeModal();
+  };
+  modal.querySelector('[data-act="close"]').onclick = onClose;
+  modalOverlay.onclick = (e) => { if (e.target === modalOverlay) onClose(); };
 }
 
 function renderTimeline() {
@@ -3442,19 +3494,12 @@ function renderDashboard() {
   const totalUnits = allStock.reduce((s, i) => s + (i.quantity || 0), 0);
   const allDeletions = deletionLog;
 
-  // Pending tasks breakdown — what specifically needs action?
-  // (Each task entry comes from getPendingActionRows; count by type.)
+  // Pending tasks breakdown — by consolidated category.
   const pendingRows = getPendingActionRows();
-  const pendingByType = {
-    update_portal: 0,
-    deactivate_sim: 0,
-    repair_device: 0,
-    repair_sensor: 0,
-    update_sim_primary: 0,
-  };
+  const pendingByCategory = { Portal: 0, SIM: 0, Service: 0 };
   for (const row of pendingRows) {
-    const t = row.task?.type;
-    if (t && pendingByType[t] != null) pendingByType[t] += 1;
+    const cat = taskFlow(row.task?.type)?.category;
+    if (cat && pendingByCategory[cat] != null) pendingByCategory[cat] += 1;
   }
 
   // Recent activity feed (top 12 events across installs, repairs, deletions)
@@ -3550,7 +3595,7 @@ function renderDashboard() {
             ${pendingCount ? `<span class="dash-trend warn-trend">needs action</span>` : `<span class="dash-trend ok-trend">all clear</span>`}
           </div>
           <span class="dash-num">${pendingCount}</span>
-          <span class="dash-label">Pending Actions</span>
+          <span class="dash-label">Repair Progress</span>
           <span class="dash-go">${pendingCount ? "Resolve →" : "All clear ✓"}</span>
         </button>
         <button type="button" class="dash-card dash-purple" data-go="sim-db">
@@ -3593,30 +3638,23 @@ function renderDashboard() {
             <button type="button" class="btn btn-warn btn-sm" data-go="pending">Resolve all →</button>
           </div>
           <div class="pending-breakdown">
-            <button type="button" class="pending-tile ${pendingByType.update_portal ? "tile-active" : "tile-zero"}" data-go="pending">
+            <button type="button" class="pending-tile ${pendingByCategory.Portal ? "tile-active" : "tile-zero"}" data-go="pending">
               <span class="pt-icon">🖥️</span>
-              <span class="pt-num">${pendingByType.update_portal}</span>
-              <span class="pt-label">Update on Portal</span>
+              <span class="pt-num">${pendingByCategory.Portal}</span>
+              <span class="pt-label">Portal updates</span>
+              <span class="pt-sub">Update portal · Vehicle no · SIM primary</span>
             </button>
-            <button type="button" class="pending-tile ${pendingByType.deactivate_sim ? "tile-active" : "tile-zero"}" data-go="pending">
+            <button type="button" class="pending-tile ${pendingByCategory.SIM ? "tile-active" : "tile-zero"}" data-go="pending">
               <span class="pt-icon">📵</span>
-              <span class="pt-num">${pendingByType.deactivate_sim}</span>
-              <span class="pt-label">Deactivate SIM</span>
+              <span class="pt-num">${pendingByCategory.SIM}</span>
+              <span class="pt-label">SIM Deactivations</span>
+              <span class="pt-sub">Old SIMs to disconnect with telecom</span>
             </button>
-            <button type="button" class="pending-tile ${pendingByType.update_sim_primary ? "tile-active" : "tile-zero"}" data-go="pending">
-              <span class="pt-icon">📞</span>
-              <span class="pt-num">${pendingByType.update_sim_primary}</span>
-              <span class="pt-label">Update SIM primary (secondary entered)</span>
-            </button>
-            <button type="button" class="pending-tile ${pendingByType.repair_device ? "tile-active" : "tile-zero"}" data-go="pending">
+            <button type="button" class="pending-tile ${pendingByCategory.Service ? "tile-active" : "tile-zero"}" data-go="pending">
               <span class="pt-icon">🔧</span>
-              <span class="pt-num">${pendingByType.repair_device}</span>
-              <span class="pt-label">Repair Device</span>
-            </button>
-            <button type="button" class="pending-tile ${pendingByType.repair_sensor ? "tile-active" : "tile-zero"}" data-go="pending">
-              <span class="pt-icon">🛰️</span>
-              <span class="pt-num">${pendingByType.repair_sensor}</span>
-              <span class="pt-label">Repair Sensor</span>
+              <span class="pt-num">${pendingByCategory.Service}</span>
+              <span class="pt-label">Service items</span>
+              <span class="pt-sub">Devices &amp; sensors at service center</span>
             </button>
           </div>
         </section>
@@ -3772,7 +3810,10 @@ function renderInstallationsPage() {
                   <td class="mono">${escapeHtml(i.sensorNo)}</td>
                   <td class="history-cell">${historyList(i.imeiHistory)}</td>
                   <td class="history-cell">${simHistoryCell(i)}</td>
-                  <td><button type="button" class="btn btn-outline btn-sm edit-btn" data-id="${i.id}">Edit</button></td>
+                  <td class="row-actions">
+                    <button type="button" class="btn btn-outline btn-sm view-tl-btn" data-id="${i.id}" title="View vehicle timeline">📅 Timeline</button>
+                    <button type="button" class="btn btn-outline btn-sm edit-btn" data-id="${i.id}">Edit</button>
+                  </td>
                 </tr>`;
                       })
                       .join("")
@@ -3812,6 +3853,9 @@ function renderInstallationsPage() {
   });
   app.querySelectorAll(".edit-btn").forEach((btn) => {
     btn.addEventListener("click", () => openEditInstallation(btn.dataset.id));
+  });
+  app.querySelectorAll(".view-tl-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openVehicleTimelineModal(btn.dataset.id));
   });
 }
 
