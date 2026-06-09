@@ -3470,3 +3470,101 @@ tr.empty-row td {
     font-size: 0.72rem;
   }
 }
+
+/* ============================================================
+   v2.2 — Pending tile sub-text + Timeline modal
+   ============================================================ */
+
+.pt-sub {
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  margin-top: 0.2rem;
+  line-height: 1.35;
+}
+
+/* Wider modal for timeline */
+.modal.modal-wide {
+  max-width: 720px !important;
+}
+
+.tl-modal-body {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0.4rem 0 0;
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.tl-events {
+  list-style: none;
+  padding: 0.5rem 0 0;
+  margin: 0;
+  position: relative;
+}
+
+.tl-events::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: linear-gradient(to bottom, var(--border) 0, var(--border) 100%);
+}
+
+.tl-event {
+  position: relative;
+  padding: 0.5rem 0 0.75rem 32px;
+}
+
+.tl-event:last-child {
+  padding-bottom: 0;
+}
+
+.tl-dot {
+  position: absolute;
+  left: 4px;
+  top: 12px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 3px solid var(--surface);
+  box-shadow: 0 0 0 2px var(--primary);
+  background: var(--primary);
+}
+
+.tl-event.tl-install .tl-dot {
+  box-shadow: 0 0 0 2px #10b981;
+  background: #10b981;
+}
+
+.tl-event.tl-repair .tl-dot {
+  box-shadow: 0 0 0 2px #2563eb;
+  background: #2563eb;
+}
+
+.tl-body {
+  font-size: 0.86rem;
+}
+
+.tl-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.2rem;
+}
+
+.tl-detail {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.tl-date {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
