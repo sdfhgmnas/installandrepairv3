@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.4.0";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -1349,6 +1349,111 @@ function escapeHtml(text) {
   return el.innerHTML;
 }
 
+/* ============================================================
+   SVG CHART HELPERS — lightweight inline charts, no library.
+   ============================================================ */
+
+// Donut chart with center text. segments = [{value, color, label}].
+function donutChart({ size = 200, hole = 62, segments, centerLabel, centerSub }) {
+  const total = segments.reduce((s, x) => s + Number(x.value || 0), 0);
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = (size - 14) / 2;
+
+  if (total === 0) {
+    return `
+      <svg viewBox="0 0 ${size} ${size}" class="donut-svg" preserveAspectRatio="xMidYMid meet">
+        <circle cx="${cx}" cy="${cy}" r="${(r + hole) / 2}" fill="none" stroke="#e5e7eb" stroke-width="${r - hole}"/>
+        <text x="${cx}" y="${cy + 6}" text-anchor="middle" font-size="14" fill="#9ca3af" font-family="Manrope, sans-serif">No data</text>
+      </svg>`;
+  }
+
+  let acc = 0;
+  const paths = segments
+    .map((seg) => {
+      const v = Number(seg.value || 0);
+      if (v === 0) return "";
+      const startAngle = (acc / total) * 2 * Math.PI;
+      acc += v;
+      const endAngle = (acc / total) * 2 * Math.PI;
+      if (v === total) {
+        // Full circle as a single segment — draw a stroked ring.
+        return `<circle cx="${cx}" cy="${cy}" r="${(r + hole) / 2}" fill="none" stroke="${seg.color}" stroke-width="${r - hole}"/>`;
+      }
+      const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
+      const x1 = cx + r * Math.sin(startAngle);
+      const y1 = cy - r * Math.cos(startAngle);
+      const x2 = cx + r * Math.sin(endAngle);
+      const y2 = cy - r * Math.cos(endAngle);
+      const ix1 = cx + hole * Math.sin(startAngle);
+      const iy1 = cy - hole * Math.cos(startAngle);
+      const ix2 = cx + hole * Math.sin(endAngle);
+      const iy2 = cy - hole * Math.cos(endAngle);
+      return `<path d="M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${hole} ${hole} 0 ${largeArc} 0 ${ix1} ${iy1} Z" fill="${seg.color}"/>`;
+    })
+    .join("");
+
+  return `
+    <svg viewBox="0 0 ${size} ${size}" class="donut-svg" preserveAspectRatio="xMidYMid meet">
+      ${paths}
+      ${centerLabel != null ? `<text x="${cx}" y="${centerSub ? cy - 2 : cy + 10}" text-anchor="middle" font-size="34" font-weight="800" fill="#0f172a" font-family="Manrope, sans-serif" letter-spacing="-0.02em">${escapeHtml(String(centerLabel))}</text>` : ""}
+      ${centerSub ? `<text x="${cx}" y="${cy + 22}" text-anchor="middle" font-size="11" font-weight="700" fill="#64748b" font-family="Manrope, sans-serif" letter-spacing="0.06em">${escapeHtml(String(centerSub).toUpperCase())}</text>` : ""}
+    </svg>`;
+}
+
+// Donut chart with a legend.
+function donutWithLegend({ segments, centerLabel, centerSub, size = 200 }) {
+  const total = segments.reduce((s, x) => s + Number(x.value || 0), 0);
+  const legendHtml = segments
+    .map((seg) => {
+      const v = Number(seg.value || 0);
+      const pct = total ? Math.round((v / total) * 100) : 0;
+      return `
+        <div class="donut-legend-row">
+          <div class="donut-legend-main">
+            <span class="donut-legend-num">${v}</span>
+            <span class="donut-legend-pct">(${pct}%)</span>
+          </div>
+          <div class="donut-legend-label">
+            <span class="donut-legend-dot" style="background: ${seg.color}"></span>
+            ${escapeHtml(seg.label)}
+          </div>
+        </div>`;
+    })
+    .join("");
+  return `
+    <div class="donut-card-body">
+      <div class="donut-wrap">
+        ${donutChart({ size, segments, centerLabel, centerSub })}
+      </div>
+      <div class="donut-legend">${legendHtml}</div>
+    </div>`;
+}
+
+// Horizontal bar chart. items = [{label, value, color?}].
+function horizontalBarChart(items, opts = {}) {
+  const { showValue = true } = opts;
+  if (!items.length) return `<p class="muted" style="padding: 1rem 0;">No data.</p>`;
+  const max = Math.max(1, ...items.map((i) => Number(i.value || 0)));
+  return `
+    <div class="hbar-chart">
+      ${items
+        .map((it) => {
+          const v = Number(it.value || 0);
+          const pct = Math.max(2, Math.round((v / max) * 100));
+          return `
+            <div class="hbar-row">
+              <div class="hbar-label" title="${escapeHtml(it.label)}">${escapeHtml(it.label)}</div>
+              <div class="hbar-track">
+                <div class="hbar-fill" style="width: ${pct}%; background: ${it.color || "#14b8a6"};"></div>
+                ${showValue ? `<span class="hbar-value mono">${v}</span>` : ""}
+              </div>
+            </div>`;
+        })
+        .join("")}
+    </div>`;
+}
+
 function formatDateTime(iso) {
   return new Date(iso).toLocaleString(undefined, {
     year: "numeric",
@@ -1720,13 +1825,39 @@ function renderAkashHome() {
           <button type="button" class="btn btn-secondary btn-sm" id="refreshMine">↻ Refresh</button>
         </div>
         <div class="summary-grid">
-          <div class="summary-box">
+          <div class="summary-box summary-info">
             <strong>${myInstallations.length}</strong>
             <span>Installations</span>
           </div>
-          <div class="summary-box">
+          <div class="summary-box summary-purple">
             <strong>${myMaintenance.length}</strong>
             <span>Repair work</span>
+          </div>
+          <div class="summary-box summary-ok">
+            <strong>${(() => {
+              const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+              const i = myInstallations.filter((x) => new Date(x.createdAt).getTime() >= weekAgo).length;
+              const r = myMaintenance.filter((x) => new Date(x.createdAt).getTime() >= weekAgo).length;
+              return i + r;
+            })()}</strong>
+            <span>This week</span>
+          </div>
+          <div class="summary-box summary-warn">
+            <strong>${(() => {
+              const today = new Date();
+              const month = today.getMonth();
+              const year = today.getFullYear();
+              const i = myInstallations.filter((x) => {
+                const d = new Date(x.createdAt);
+                return d.getMonth() === month && d.getFullYear() === year;
+              }).length;
+              const r = myMaintenance.filter((x) => {
+                const d = new Date(x.createdAt);
+                return d.getMonth() === month && d.getFullYear() === year;
+              }).length;
+              return i + r;
+            })()}</strong>
+            <span>This month</span>
           </div>
         </div>
         <div class="table-wrap compact-table">
@@ -2132,7 +2263,7 @@ function renderInstallForm() {
           <div class="field">
             <label for="instSim">SIM ICCID (20-digit, printed on the SIM card) <span class="required">*</span></label>
             <input type="text" id="instSim" required placeholder="e.g. 89918720507069156677" autocomplete="off" inputmode="numeric" />
-            <p class="hint">Wahi number daalo jo SIM card pe printed hai (long 20-digit number). Primary number admin ke SIM database se automatic link ho jaayega.</p>
+            <p class="hint" id="instSimHint">Wahi number daalo jo SIM card pe printed hai (long 20-digit number). Primary number admin ke SIM database se automatic link ho jaayega.</p>
           </div>
           <div class="field">
             <label for="instMac">MAC ID <span class="required">*</span></label>
@@ -2155,6 +2286,30 @@ function renderInstallForm() {
   document.getElementById("installForm")?.addEventListener("submit", (e) => {
     e.preventDefault();
     handleInstallSubmit();
+  });
+
+  // Live SIM lookup as Akash types the ICCID — shows whether the primary
+  // is already known so he doesn't worry about the long number.
+  document.getElementById("instSim")?.addEventListener("input", (e) => {
+    const v = e.target.value.trim();
+    const h = document.getElementById("instSimHint");
+    if (!h) return;
+    if (!v) {
+      h.textContent = "Wahi number daalo jo SIM card pe printed hai (long 20-digit number). Primary number admin ke SIM database se automatic link ho jaayega.";
+      h.className = "hint";
+      return;
+    }
+    const sim = findSimBySecondary(v);
+    if (sim && sim.primaryNumber) {
+      h.textContent = `✓ Found in SIM database — primary number: ${sim.primaryNumber}`;
+      h.className = "hint hint-ok";
+    } else if (sim && !sim.primaryNumber) {
+      h.textContent = "⚠️ ICCID is in SIM database but primary not yet known — admin will fill it in Repair Progress.";
+      h.className = "hint hint-warn";
+    } else {
+      h.textContent = "ℹ️ New ICCID — will be auto-added to SIM database. Admin can fill the primary number later.";
+      h.className = "hint hint-info";
+    }
   });
 }
 
@@ -3502,6 +3657,76 @@ function renderDashboard() {
     if (cat && pendingByCategory[cat] != null) pendingByCategory[cat] += 1;
   }
 
+  // ===== Donut chart segments =====
+
+  // 1) Fleet status — Installations grouped by GPS model (top 5)
+  const modelCounts = {};
+  for (const inst of allInstalls) {
+    const m = inst.gpsModel || "Unknown";
+    modelCounts[m] = (modelCounts[m] || 0) + 1;
+  }
+  const MODEL_COLORS = ["#f97316", "#facc15", "#3b82f6", "#10b981", "#a855f7", "#ef4444", "#0891b2", "#64748b"];
+  const modelEntries = Object.entries(modelCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+  const installSegments = modelEntries.map(([label, value], i) => ({
+    label,
+    value,
+    color: MODEL_COLORS[i % MODEL_COLORS.length],
+  }));
+
+  // 2) SIM status — categorize SIMs
+  const simStatus = {
+    "In Use": 0,
+    "Available": 0,
+    "Pending Primary": 0,
+    "Looks Swapped": 0,
+  };
+  const inUseSet = new Set();
+  for (const inst of allInstalls) {
+    for (const h of inst.simHistory) {
+      if (h.active && h.value) inUseSet.add(h.value.toLowerCase());
+    }
+  }
+  for (const s of allSims) {
+    const pri = (s.primaryNumber || "").toLowerCase();
+    const sec = (s.secondaryNumber || "").toLowerCase();
+    const isInUse = (pri && inUseSet.has(pri)) || (sec && inUseSet.has(sec));
+    if (!s.primaryNumber) simStatus["Pending Primary"] += 1;
+    else if (digitsOnly(s.primaryNumber).length >= 18 && digitsOnly(s.secondaryNumber || "").length <= 14) simStatus["Looks Swapped"] += 1;
+    else if (isInUse) simStatus["In Use"] += 1;
+    else simStatus["Available"] += 1;
+  }
+  const simSegments = [
+    { label: "Available", value: simStatus["Available"], color: "#10b981" },
+    { label: "In Use", value: simStatus["In Use"], color: "#3b82f6" },
+    { label: "Pending Primary", value: simStatus["Pending Primary"], color: "#f59e0b" },
+    { label: "Looks Swapped", value: simStatus["Looks Swapped"], color: "#ef4444" },
+  ];
+
+  // 3) Repair Progress — by category
+  const repairSegments = [
+    { label: "Portal updates", value: pendingByCategory.Portal, color: "#0891b2" },
+    { label: "SIM Deactivations", value: pendingByCategory.SIM, color: "#a855f7" },
+    { label: "Service items", value: pendingByCategory.Service, color: "#f97316" },
+  ];
+
+  // 4) Top vehicles by repair count (for horizontal bar chart)
+  const vehicleRepairCounts = {};
+  for (const m of allMaint) {
+    const v = m.vehicleNo;
+    if (!v) continue;
+    vehicleRepairCounts[v] = (vehicleRepairCounts[v] || 0) + 1;
+  }
+  const topVehicles = Object.entries(vehicleRepairCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([label, value], i) => ({
+      label,
+      value,
+      color: ["#0891b2", "#06b6d4", "#22d3ee", "#67e8f9", "#a5f3fc", "#cffafe"][i],
+    }));
+
   // Recent activity feed (top 12 events across installs, repairs, deletions)
   const events = [
     ...allInstalls.map((i) => ({
@@ -3569,7 +3794,51 @@ function renderDashboard() {
     <main class="main">
       ${renderAdminNav("dashboard")}
 
-      <!-- Colorful primary stats -->
+      <!-- ROW 1: Big donut charts (Fleet / SIM / Repair Progress) -->
+      <div class="donut-row">
+        <section class="card donut-card">
+          <div class="section-heading">
+            <div>
+              <h2>🚛 Fleet by GPS Model</h2>
+              <p class="section-subtitle">${allInstalls.length} total installations</p>
+            </div>
+          </div>
+          ${donutWithLegend({
+            segments: installSegments,
+            centerLabel: allInstalls.length,
+            centerSub: "Installs",
+          })}
+        </section>
+        <section class="card donut-card">
+          <div class="section-heading">
+            <div>
+              <h2>📶 SIM Status</h2>
+              <p class="section-subtitle">${allSims.length} SIMs in database</p>
+            </div>
+          </div>
+          ${donutWithLegend({
+            segments: simSegments,
+            centerLabel: allSims.length,
+            centerSub: "SIMs",
+          })}
+        </section>
+        <section class="card donut-card">
+          <div class="section-heading">
+            <div>
+              <h2>⚙️ Repair Progress</h2>
+              <p class="section-subtitle">${pendingCount} pending tasks</p>
+            </div>
+            ${pendingCount ? `<button type="button" class="btn btn-warn btn-sm" data-go="pending">Resolve →</button>` : ""}
+          </div>
+          ${donutWithLegend({
+            segments: repairSegments,
+            centerLabel: pendingCount,
+            centerSub: "Pending",
+          })}
+        </section>
+      </div>
+
+      <!-- ROW 2: Colorful primary stats -->
       <div class="dash-grid">
         <button type="button" class="dash-card dash-cyan" data-go="installations">
           <div class="dash-card-top">
@@ -3626,39 +3895,6 @@ function renderDashboard() {
           <span class="dash-go">View audit →</span>
         </button>
       </div>
-
-      <!-- Pending Work breakdown by task type -->
-      ${pendingCount ? `
-        <section class="card pending-breakdown-card">
-          <div class="section-heading">
-            <div>
-              <h2>⚙️ Repair Progress — by type</h2>
-              <p class="section-subtitle">Tap any tile to jump to the matching tasks.</p>
-            </div>
-            <button type="button" class="btn btn-warn btn-sm" data-go="pending">Resolve all →</button>
-          </div>
-          <div class="pending-breakdown">
-            <button type="button" class="pending-tile ${pendingByCategory.Portal ? "tile-active" : "tile-zero"}" data-go="pending">
-              <span class="pt-icon">🖥️</span>
-              <span class="pt-num">${pendingByCategory.Portal}</span>
-              <span class="pt-label">Portal updates</span>
-              <span class="pt-sub">Update portal · Vehicle no · SIM primary</span>
-            </button>
-            <button type="button" class="pending-tile ${pendingByCategory.SIM ? "tile-active" : "tile-zero"}" data-go="pending">
-              <span class="pt-icon">📵</span>
-              <span class="pt-num">${pendingByCategory.SIM}</span>
-              <span class="pt-label">SIM Deactivations</span>
-              <span class="pt-sub">Old SIMs to disconnect with telecom</span>
-            </button>
-            <button type="button" class="pending-tile ${pendingByCategory.Service ? "tile-active" : "tile-zero"}" data-go="pending">
-              <span class="pt-icon">🔧</span>
-              <span class="pt-num">${pendingByCategory.Service}</span>
-              <span class="pt-label">Service items</span>
-              <span class="pt-sub">Devices &amp; sensors at service center</span>
-            </button>
-          </div>
-        </section>
-      ` : ""}
 
       <!-- Two-column: Activity feed + Stock by category -->
       <div class="dash-row">
@@ -3717,6 +3953,20 @@ function renderDashboard() {
           ` : `<p class="muted" style="padding: 1rem 0;">No stock items yet.</p>`}
         </section>
       </div>
+
+      <!-- BOTTOM ROW: Top vehicles by repair count -->
+      ${topVehicles.length ? `
+        <section class="card">
+          <div class="section-heading">
+            <div>
+              <h2>🚛 Top Vehicles by Repair Count</h2>
+              <p class="section-subtitle">Vehicles that have been to service the most.</p>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" data-go="repairs">View all repairs →</button>
+          </div>
+          ${horizontalBarChart(topVehicles)}
+        </section>
+      ` : ""}
     </main>
   `;
   bindLogout();
@@ -4887,7 +5137,15 @@ function renderStockPage() {
   }
   const lowStockItems = items.filter(isLow);
 
-  // Category filter chips
+  // Category filter chips — color-coded by kind so GPS/SIM/SENSOR are
+  // visually distinguishable from generic bulk categories.
+  function chipKindClass(category) {
+    const k = categoryKind(category);
+    if (k === "gps") return "chip-kind-gps";
+    if (k === "sim") return "chip-kind-sim";
+    if (k === "sensor") return "chip-kind-sensor";
+    return "chip-kind-bulk";
+  }
   const chipsHtml = `
     <div class="filter-chips" style="margin-bottom: 0.85rem;">
       <button type="button" class="filter-chip ${stockCategoryFilter === "all" ? "active" : ""}" data-cat="all">All (${items.length})</button>
@@ -4895,7 +5153,7 @@ function renderStockPage() {
         .sort()
         .map((c) => {
           const count = items.filter((i) => i.category === c).length;
-          return `<button type="button" class="filter-chip ${stockCategoryFilter === c ? "active" : ""}" data-cat="${escapeHtml(c)}">${escapeHtml(c)} (${count})</button>`;
+          return `<button type="button" class="filter-chip ${chipKindClass(c)} ${stockCategoryFilter === c ? "active" : ""}" data-cat="${escapeHtml(c)}">${escapeHtml(c)} (${count})</button>`;
         })
         .join("")}
     </div>
