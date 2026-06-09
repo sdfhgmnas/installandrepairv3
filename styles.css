@@ -3568,3 +3568,60 @@ tr.empty-row td {
   color: var(--text-muted);
   margin-top: 0.15rem;
 }
+
+/* ============================================================
+   v2.3 — Stock chip color coding + install form info hint
+   ============================================================ */
+
+/* Color-coded category filter chips */
+.filter-chip.chip-kind-gps {
+  --chip-bg: rgba(8, 145, 178, 0.08);
+  --chip-fg: #0e7490;
+  --chip-border: rgba(8, 145, 178, 0.3);
+}
+
+.filter-chip.chip-kind-sim {
+  --chip-bg: rgba(168, 85, 247, 0.08);
+  --chip-fg: #9333ea;
+  --chip-border: rgba(168, 85, 247, 0.3);
+}
+
+.filter-chip.chip-kind-sensor {
+  --chip-bg: rgba(20, 184, 166, 0.08);
+  --chip-fg: #0d9488;
+  --chip-border: rgba(20, 184, 166, 0.3);
+}
+
+.filter-chip.chip-kind-bulk {
+  --chip-bg: rgba(100, 116, 139, 0.08);
+  --chip-fg: #475569;
+  --chip-border: rgba(100, 116, 139, 0.25);
+}
+
+.filter-chip[class*="chip-kind-"]:not(.active) {
+  background: var(--chip-bg);
+  color: var(--chip-fg);
+  border-color: var(--chip-border);
+}
+
+.filter-chip[class*="chip-kind-"]:not(.active):hover {
+  background: var(--chip-bg);
+  border-color: var(--chip-fg);
+  filter: brightness(0.97);
+}
+
+/* When active (selected), use solid filled style with the chip's color */
+.filter-chip.chip-kind-gps.active { background: #0891b2; border-color: #0891b2; }
+.filter-chip.chip-kind-sim.active { background: #a855f7; border-color: #a855f7; }
+.filter-chip.chip-kind-sensor.active { background: #14b8a6; border-color: #14b8a6; }
+.filter-chip.chip-kind-bulk.active { background: #64748b; border-color: #64748b; }
+
+/* Info hint variant (blue) for the install ICCID feedback */
+.hint.hint-info {
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.06);
+  padding: 0.35rem 0.55rem;
+  border-radius: 6px;
+  border-left: 3px solid #2563eb;
+  margin-top: 0.4rem;
+}
