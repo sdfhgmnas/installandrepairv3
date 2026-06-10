@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "2.4.0";
+const APP_VERSION = "2.6.0";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -1454,6 +1454,218 @@ function horizontalBarChart(items, opts = {}) {
     </div>`;
 }
 
+/* ============================================================
+   BARCODE / QR SCANNER — camera-based input for IMEI and ICCID.
+   Uses html5-qrcode (loaded via CDN in index.html). On detection
+   the callback is invoked with the raw decoded text.
+   ============================================================ */
+
+let _activeScanner = null;
+
+function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Point camera at the barcode or QR code.", onScan }) {
+  if (typeof Html5Qrcode === "undefined") {
+    showToast("Camera scanner library not loaded. Refresh and try again.", true);
+    return;
+  }
+  modal.innerHTML = `
+    <h3>${escapeHtml(title)}</h3>
+    <p class="modal-desc">${escapeHtml(hint)}</p>
+    <div id="qrReader" class="qr-reader-wrap"></div>
+    <p class="hint hint-info" id="qrStatus">Initialising camera…</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary btn-block" data-act="cancel">Cancel</button>
+    </div>
+  `;
+  modal.classList.add("modal-wide");
+  modalOverlay.classList.remove("hidden");
+
+  const status = document.getElementById("qrStatus");
+  const setStatus = (text, cls = "hint hint-info") => {
+    if (status) { status.textContent = text; status.className = cls; }
+  };
+
+  const cleanup = async () => {
+    try {
+      if (_activeScanner) {
+        await _activeScanner.stop().catch(() => {});
+        await _activeScanner.clear().catch(() => {});
+      }
+    } catch {}
+    _activeScanner = null;
+    modal.classList.remove("modal-wide");
+    closeModal();
+  };
+
+  try {
+    _activeScanner = new Html5Qrcode("qrReader", { verbose: false });
+    _activeScanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 260, height: 140 } },
+      async (decodedText) => {
+        setStatus(`✓ Scanned: ${decodedText}`, "hint hint-ok");
+        await cleanup();
+        try { onScan(String(decodedText).trim()); } catch {}
+      },
+      () => {} // ignore frequent miss-callbacks
+    ).then(() => {
+      setStatus("📷 Hold steady — looking for barcode…");
+    }).catch((err) => {
+      console.warn("Camera start failed:", err);
+      setStatus("Camera access denied or unavailable. Type manually.", "hint hint-warn");
+    });
+  } catch (err) {
+    setStatus("Scanner could not start. Type manually.", "hint hint-warn");
+  }
+
+  modal.querySelector('[data-act="cancel"]').onclick = cleanup;
+  modalOverlay.onclick = (e) => { if (e.target === modalOverlay) cleanup(); };
+}
+
+/* ============================================================
+   EXCEL EXPORT — uses SheetJS (XLSX) loaded via CDN.
+   Generates a downloadable .xlsx file for the chosen data.
+   ============================================================ */
+
+function todayFileStamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function downloadAsExcel(sheets, baseName) {
+  // sheets = [{ name, rows: array-of-objects }]
+  if (typeof XLSX === "undefined") {
+    showToast("Excel library not loaded. Refresh and try again.", true);
+    return;
+  }
+  const wb = XLSX.utils.book_new();
+  for (const s of sheets) {
+    const rows = s.rows && s.rows.length ? s.rows : [{ "(empty)": "No data" }];
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // Auto-size columns roughly based on header length + content
+    const cols = Object.keys(rows[0]).map((k) => {
+      const maxLen = Math.max(
+        k.length,
+        ...rows.map((r) => String(r[k] ?? "").length)
+      );
+      return { wch: Math.min(40, Math.max(10, maxLen + 2)) };
+    });
+    ws["!cols"] = cols;
+    XLSX.utils.book_append_sheet(wb, ws, s.name.slice(0, 30));
+  }
+  XLSX.writeFile(wb, `${baseName}-${todayFileStamp()}.xlsx`);
+}
+
+function exportInstallationsToExcel() {
+  const installs = loadInstallations();
+  const rows = installs.map((i) => ({
+    "Vehicle No": i.vehicleNo || "",
+    "GPS Model": i.gpsModel || "",
+    "Current IMEI": getCurrentImei(i),
+    "Current SIM (Primary)": resolvePrimarySim(getCurrentSim(i)) || "",
+    "SIM ICCID (Secondary)": i.secondarySim || (i.simHistory[0]?.secondaryValue) || "",
+    "MAC ID": i.macId || "",
+    "Sensor No": i.sensorNo || "",
+    "IMEI History": (i.imeiHistory || []).map((h) => h.value).join(" → "),
+    "SIM History": (i.simHistory || []).map((h) => h.value).join(" → "),
+    "Created By": i.createdBy || "",
+    "Created At": formatDateTime(i.createdAt),
+    "Tasks Complete": Object.values(i.tasks || {}).filter((t) => t?.completedAt).length,
+    "Tasks Pending": INSTALL_TASK_TYPES.filter((t) => !(i.tasks?.[t]?.completedAt)).length,
+  }));
+  downloadAsExcel([{ name: "Installations", rows }], "installations");
+  showToast(`Exported ${rows.length} installations.`);
+}
+
+function exportSimsToExcel() {
+  const allSims = loadSims();
+  const allInstalls = loadInstallations();
+  const inUseMap = new Map();
+  for (const inst of allInstalls) {
+    for (const h of inst.simHistory) {
+      if (h.active && h.value) inUseMap.set(h.value.toLowerCase(), inst.vehicleNo);
+    }
+  }
+  const rows = allSims.map((s) => {
+    const pri = (s.primaryNumber || "").toLowerCase();
+    const sec = (s.secondaryNumber || "").toLowerCase();
+    const linkedVehicle = inUseMap.get(pri) || inUseMap.get(sec) || "";
+    let status = "Available";
+    if (!s.primaryNumber) status = "Pending Primary";
+    else if (linkedVehicle) status = "In Use";
+    return {
+      "Primary Number": s.primaryNumber || "",
+      "Secondary Number (ICCID)": s.secondaryNumber || "",
+      "Status": status,
+      "Linked Vehicle": linkedVehicle,
+      "Notes": s.notes || "",
+      "Added At": s.createdAt ? formatDateTime(s.createdAt) : "",
+    };
+  });
+  downloadAsExcel([{ name: "SIM Database", rows }], "sim-database");
+  showToast(`Exported ${rows.length} SIMs.`);
+}
+
+function exportStockToExcel() {
+  const items = loadStockItems();
+  const tx = loadStockTransactions();
+  const itemRows = items.map((it) => ({
+    "Item Name": it.name || "",
+    "Category": it.category || "",
+    "Quantity": it.quantity ?? 0,
+    "Unit": it.unit || "pcs",
+    "IMEI": it.metadata?.imei || "",
+    "MAC": it.metadata?.mac || "",
+    "SIM Primary": it.metadata?.primary || "",
+    "SIM Secondary (ICCID)": it.metadata?.secondary || "",
+    "Sensor No": it.metadata?.sensorNo || "",
+    "Supplier": it.supplier || "",
+    "Low-stock Threshold": it.lowStockThreshold ?? "",
+    "Notes": it.notes || "",
+    "Added": it.createdAt ? formatDateTime(it.createdAt) : "",
+  }));
+  const txRows = tx.slice(0, 1000).map((t) => ({
+    "Date": formatDateTime(t.createdAt),
+    "Item": t.itemName || "",
+    "Type": t.type || "",
+    "Change": t.delta ?? 0,
+    "Vehicle": t.vehicleNo || "",
+    "Note": t.note || "",
+    "By": t.createdBy || "",
+  }));
+  downloadAsExcel(
+    [
+      { name: "Stock Items", rows: itemRows },
+      { name: "Recent Transactions", rows: txRows },
+    ],
+    "stock"
+  );
+  showToast(`Exported ${itemRows.length} stock items.`);
+}
+
+function exportRepairsToExcel() {
+  const records = loadMaintenance();
+  const rows = records.map((r) => ({
+    "Vehicle No": r.vehicleNo || "",
+    "Old IMEI": r.oldImei || "",
+    "Old SIM": r.oldSimNo || "",
+    "SIM Changed": r.simChange ? "Yes" : "",
+    "New SIM (ICCID)": r.newSimNo || "",
+    "Device Changed": r.deviceChange ? "Yes" : "",
+    "New IMEI": r.newImei || "",
+    "Device Out for Repair": r.deviceOutForRepair ? "Yes" : "",
+    "Sensor Out for Repair": r.sensorOutForRepair ? "Yes" : "",
+    "Other Work": r.otherWorkText || "",
+    "Remarks": r.remarks || "",
+    "Created By": r.createdBy || "",
+    "Created At": formatDateTime(r.createdAt),
+    "Tasks Complete": getTasks(r).filter(isTaskDone).length,
+    "Tasks Pending": getTasks(r).filter((t) => !isTaskDone(t)).length,
+  }));
+  downloadAsExcel([{ name: "Repair Records", rows }], "repair-records");
+  showToast(`Exported ${rows.length} repair records.`);
+}
+
 function formatDateTime(iso) {
   return new Date(iso).toLocaleString(undefined, {
     year: "numeric",
@@ -1971,11 +2183,23 @@ function renderAkashHome() {
         </div>
       </section>
     </main>
+
+    <!-- Floating action button — quick access to New Installation from anywhere -->
+    <div class="fab-container">
+      <button type="button" class="fab fab-mini" id="fabRepair" aria-label="Report Repair">
+        <span class="fab-icon">🛠️</span>
+      </button>
+      <button type="button" class="fab fab-main" id="fabInstall" aria-label="New Installation">
+        <span class="fab-icon">+</span>
+      </button>
+    </div>
   `;
 
   bindLogout();
   document.getElementById("goInstall")?.addEventListener("click", () => setView("install"));
   document.getElementById("goRepair")?.addEventListener("click", () => setView("repair"));
+  document.getElementById("fabInstall")?.addEventListener("click", () => setView("install"));
+  document.getElementById("fabRepair")?.addEventListener("click", () => setView("repair"));
   document.getElementById("refreshMine")?.addEventListener("click", async () => {
     renderLoading("Refreshing data from Supabase...");
     await refreshAllData();
@@ -2250,7 +2474,10 @@ function renderInstallForm() {
         <form id="installForm" class="form-grid">
           <div class="field">
             <label for="instImei">IMEI No <span class="required">*</span></label>
-            <input type="text" id="instImei" required placeholder="e.g. 867530012345678" autocomplete="off" inputmode="numeric" />
+            <div class="input-with-scan">
+              <input type="text" id="instImei" required placeholder="e.g. 867530012345678" autocomplete="off" inputmode="numeric" />
+              <button type="button" class="scan-btn" id="scanImei" aria-label="Scan IMEI barcode">📷</button>
+            </div>
           </div>
           <div class="field">
             <label for="instVehicle">Vehicle No <span class="required">*</span></label>
@@ -2262,7 +2489,10 @@ function renderInstallForm() {
           </div>
           <div class="field">
             <label for="instSim">SIM ICCID (20-digit, printed on the SIM card) <span class="required">*</span></label>
-            <input type="text" id="instSim" required placeholder="e.g. 89918720507069156677" autocomplete="off" inputmode="numeric" />
+            <div class="input-with-scan">
+              <input type="text" id="instSim" required placeholder="e.g. 89918720507069156677" autocomplete="off" inputmode="numeric" />
+              <button type="button" class="scan-btn" id="scanSim" aria-label="Scan SIM ICCID barcode">📷</button>
+            </div>
             <p class="hint" id="instSimHint">Wahi number daalo jo SIM card pe printed hai (long 20-digit number). Primary number admin ke SIM database se automatic link ho jaayega.</p>
           </div>
           <div class="field">
@@ -2286,6 +2516,32 @@ function renderInstallForm() {
   document.getElementById("installForm")?.addEventListener("submit", (e) => {
     e.preventDefault();
     handleInstallSubmit();
+  });
+
+  // Barcode scan handlers — fill IMEI/SIM by scanning the device/card.
+  document.getElementById("scanImei")?.addEventListener("click", () => {
+    openBarcodeScannerModal({
+      title: "📷 Scan IMEI",
+      hint: "GPS device pe printed barcode ya QR code pe camera point karo.",
+      onScan: (val) => {
+        const cleaned = val.replace(/\D/g, "") || val.trim();
+        document.getElementById("instImei").value = cleaned;
+        showToast(`IMEI scanned: ${cleaned}`);
+      },
+    });
+  });
+  document.getElementById("scanSim")?.addEventListener("click", () => {
+    openBarcodeScannerModal({
+      title: "📷 Scan SIM ICCID",
+      hint: "SIM card pe printed long number ya barcode pe camera point karo.",
+      onScan: (val) => {
+        const cleaned = val.replace(/\D/g, "") || val.trim();
+        const input = document.getElementById("instSim");
+        input.value = cleaned;
+        input.dispatchEvent(new Event("input")); // trigger live lookup
+        showToast(`ICCID scanned: ${cleaned}`);
+      },
+    });
   });
 
   // Live SIM lookup as Akash types the ICCID — shows whether the primary
@@ -3613,12 +3869,101 @@ function renderAdminNav(activeKey) {
       <span class="nav-sep">·</span>
       <button type="button" class="nav-link-sm ${activeKey === "deletions" ? "active" : ""}" data-nav="deletions">🗑️ Deletion Audit Log${deletionLog.length ? ` (${deletionLog.length})` : ""}</button>
     </div>
+    ${renderMobileBottomBar(activeKey)}
   `;
+}
+
+// Bottom tab bar for mobile only (hidden on desktop via CSS).
+// 5 most-used tabs: Home, Installs, Repairs, Progress, Stock.
+// Additional tabs (SIM DB, Timeline, Deletions) accessible via "More" sheet.
+function renderMobileBottomBar(activeKey) {
+  const PRIMARY = [
+    { key: "dashboard", view: "dashboard", icon: "🏠", label: "Home" },
+    { key: "installations", view: "installations", icon: "🚛", label: "Installs" },
+    { key: "repairs", view: "repairs", icon: "🛠️", label: "Repairs" },
+    { key: "pending", view: "pending", icon: "⚙️", label: "Progress" },
+    { key: "sim-db", view: "sim-db", icon: "📶", label: "SIMs" },
+  ];
+  // Show pending count badge on the Progress tab if non-zero.
+  const pendingCount = (() => {
+    try {
+      return getPendingActionRows().length;
+    } catch {
+      return 0;
+    }
+  })();
+  return `
+    <nav class="bottom-tab-bar" aria-label="Primary mobile navigation">
+      ${PRIMARY.map(
+        (t) => `
+          <button type="button" class="bt-tab ${t.key === activeKey ? "active" : ""}" data-nav="${t.view}">
+            <span class="bt-icon">${t.icon}</span>
+            <span class="bt-label">${t.label}</span>
+            ${t.key === "pending" && pendingCount ? `<span class="bt-badge">${pendingCount}</span>` : ""}
+          </button>
+        `
+      ).join("")}
+      <button type="button" class="bt-tab" data-act="more-sheet">
+        <span class="bt-icon">⋯</span>
+        <span class="bt-label">More</span>
+      </button>
+    </nav>
+  `;
+}
+
+// Bottom sheet ("More" menu on mobile) — Stock, Timeline, Audit, Logout.
+function openMoreSheet() {
+  modal.innerHTML = `
+    <h3 class="sheet-title">⋯ More</h3>
+    <div class="sheet-grid">
+      <button type="button" class="sheet-item" data-nav="stock">
+        <span class="sheet-icon">📦</span>
+        <span class="sheet-label">Stock</span>
+      </button>
+      <button type="button" class="sheet-item" data-nav="timeline">
+        <span class="sheet-icon">📅</span>
+        <span class="sheet-label">Vehicle Timeline</span>
+      </button>
+      <button type="button" class="sheet-item" data-nav="deletions">
+        <span class="sheet-icon">🗑️</span>
+        <span class="sheet-label">Audit Log${deletionLog.length ? ` (${deletionLog.length})` : ""}</span>
+      </button>
+      <button type="button" class="sheet-item sheet-danger" data-act="logout">
+        <span class="sheet-icon">↩️</span>
+        <span class="sheet-label">Logout</span>
+      </button>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary btn-block" data-act="close">Close</button>
+    </div>
+  `;
+  modal.classList.add("modal-sheet");
+  modalOverlay.classList.remove("hidden");
+  const close = () => {
+    modal.classList.remove("modal-sheet");
+    closeModal();
+  };
+  modal.querySelector('[data-act="close"]').onclick = close;
+  modalOverlay.onclick = (e) => { if (e.target === modalOverlay) close(); };
+  modal.querySelectorAll("[data-nav]").forEach((b) =>
+    b.addEventListener("click", () => {
+      close();
+      setView(b.dataset.nav);
+    })
+  );
+  modal.querySelector('[data-act="logout"]').onclick = () => {
+    close();
+    currentUser = null;
+    setView("login");
+  };
 }
 
 function bindAdminNav() {
   app.querySelectorAll("[data-nav]").forEach((btn) => {
     btn.addEventListener("click", () => setView(btn.dataset.nav));
+  });
+  app.querySelectorAll('[data-act="more-sheet"]').forEach((btn) => {
+    btn.addEventListener("click", openMoreSheet);
   });
 }
 
@@ -4020,6 +4365,9 @@ function renderInstallationsPage() {
             <h2>All Installations (${allInstalls.length})</h2>
             <p class="section-subtitle">Every GPS device installed on the fleet. Use Edit to fix typos in vehicle / model / MAC / sensor.</p>
           </div>
+          <div class="bulk-actions">
+            <button type="button" class="btn btn-outline btn-sm" id="exportInstallsBtn">↓ Export Excel</button>
+          </div>
         </div>
         <div class="list-tools admin-search">
           <input type="search" id="adminSearch" placeholder="Search vehicle, IMEI, SIM, MAC..." value="${escapeHtml(searchQuery)}" />
@@ -4082,6 +4430,7 @@ function renderInstallationsPage() {
     render();
   });
   document.getElementById("downloadSample")?.addEventListener("click", downloadInstallationSample);
+  document.getElementById("exportInstallsBtn")?.addEventListener("click", exportInstallationsToExcel);
   document.getElementById("bulkUpload")?.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -4155,6 +4504,9 @@ function renderRepairsPage() {
             <h2>All Repair Work (${allMaint.length})</h2>
             <p class="section-subtitle">Every repair / maintenance entry from the field, with pending follow-up status.</p>
           </div>
+          <div class="bulk-actions">
+            <button type="button" class="btn btn-outline btn-sm" id="exportRepairsBtn">↓ Export Excel</button>
+          </div>
         </div>
         <div class="list-tools admin-search">
           <input type="search" id="adminSearch" placeholder="Search vehicle, IMEI, SIM, work..." value="${escapeHtml(searchQuery)}" />
@@ -4203,6 +4555,7 @@ function renderRepairsPage() {
     render();
   });
   document.getElementById("downloadSample")?.addEventListener("click", downloadRepairSample);
+  document.getElementById("exportRepairsBtn")?.addEventListener("click", exportRepairsToExcel);
   document.getElementById("bulkUpload")?.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -4661,6 +5014,7 @@ function renderSimDb() {
           <div class="bulk-actions">
             <button type="button" class="btn btn-secondary btn-sm" id="addSimBtn">+ Add SIM</button>
             <button type="button" class="btn btn-primary btn-sm" data-nav="sim-upload">↑ Bulk upload</button>
+            <button type="button" class="btn btn-outline btn-sm" id="exportSimsBtn">↓ Export Excel</button>
           </div>
         </div>
         <div class="list-tools admin-search">
@@ -4693,6 +5047,7 @@ function renderSimDb() {
   });
 
   document.getElementById("addSimBtn")?.addEventListener("click", () => openSimEditor(null));
+  document.getElementById("exportSimsBtn")?.addEventListener("click", exportSimsToExcel);
   app.querySelectorAll(".sim-row-edit").forEach((btn) => {
     btn.addEventListener("click", () => openSimEditor(btn.dataset.id));
   });
@@ -5254,6 +5609,7 @@ function renderStockPage() {
           <div class="bulk-actions">
             <button type="button" class="btn btn-secondary btn-sm" id="manageCatsBtn">⚙️ Manage categories</button>
             <button type="button" class="btn btn-secondary btn-sm" id="manageSuppliersBtn">🏷️ Manage suppliers</button>
+            <button type="button" class="btn btn-outline btn-sm" id="exportStockBtn">↓ Export Excel</button>
             <button type="button" class="btn btn-primary btn-sm" id="addStockBtn">+ Add Item</button>
           </div>
         </div>
@@ -5309,6 +5665,7 @@ function renderStockPage() {
   );
   document.getElementById("manageCatsBtn")?.addEventListener("click", openCategoryManager);
   document.getElementById("manageSuppliersBtn")?.addEventListener("click", openSupplierManager);
+  document.getElementById("exportStockBtn")?.addEventListener("click", exportStockToExcel);
   app.querySelectorAll(".stock-edit").forEach((btn) => {
     btn.addEventListener("click", () => openStockEditor(btn.dataset.id, allCategoryOptions));
   });
