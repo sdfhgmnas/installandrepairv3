@@ -3625,3 +3625,329 @@ tr.empty-row td {
   border-left: 3px solid #2563eb;
   margin-top: 0.4rem;
 }
+
+/* ============================================================
+   v2.4 — Dashboard donut charts + responsive layouts
+   ============================================================ */
+
+/* ===== Donut chart row (3 cards desktop, 2 tablet, 1 mobile) ===== */
+.donut-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+}
+
+.donut-card {
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.1rem 1.25rem 1.2rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: box-shadow 0.18s, transform 0.18s;
+}
+
+.donut-card:hover {
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.07);
+  transform: translateY(-1px);
+}
+
+.donut-card .section-heading {
+  margin-bottom: 0.2rem;
+}
+
+.donut-card .section-heading h2 {
+  font-size: 1rem;
+  margin: 0;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.donut-card .section-subtitle {
+  font-size: 0.75rem;
+  margin-top: 0.15rem;
+  color: var(--text-muted);
+}
+
+.donut-card-body {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  padding: 0.5rem 0 0.1rem;
+}
+
+.donut-wrap {
+  flex: 0 0 auto;
+  width: 50%;
+  max-width: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.donut-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.donut-legend {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.donut-legend-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.donut-legend-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.32rem;
+  line-height: 1.05;
+}
+
+.donut-legend-num {
+  font-family: var(--font-mono);
+  font-size: 1.12rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.donut-legend-pct {
+  font-size: 0.74rem;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.donut-legend-label {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #475569;
+  letter-spacing: 0.01em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.donut-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+/* ===== Horizontal bar chart ===== */
+.hbar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.6rem 0 0.2rem;
+}
+
+.hbar-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.hbar-label {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.hbar-track {
+  position: relative;
+  background: #f1f5f9;
+  border-radius: 6px;
+  height: 22px;
+  overflow: hidden;
+}
+
+.hbar-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.4s ease;
+}
+
+.hbar-value {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: #0f172a;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.6);
+}
+
+/* ===== Responsive breakpoints ===== */
+
+/* Tablet: 2 donuts per row */
+@media (max-width: 1024px) {
+  .donut-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .donut-row .donut-card:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+  .donut-row .donut-card:nth-child(3) .donut-wrap {
+    max-width: 200px;
+  }
+}
+
+/* Mobile: stack everything */
+@media (max-width: 640px) {
+  .donut-row {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    margin-bottom: 0.85rem;
+  }
+  .donut-row .donut-card:nth-child(3) {
+    grid-column: auto;
+  }
+  .donut-card {
+    padding: 0.95rem 1rem 1rem;
+  }
+  .donut-card .section-heading h2 {
+    font-size: 0.95rem;
+  }
+  .donut-card-body {
+    flex-direction: column;
+    align-items: center;
+    gap: 0.9rem;
+  }
+  .donut-wrap {
+    width: 60%;
+    max-width: 170px;
+  }
+  .donut-legend {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.55rem 1rem;
+  }
+  .hbar-row {
+    grid-template-columns: 100px 1fr;
+    gap: 0.5rem;
+  }
+  .hbar-label {
+    font-size: 0.72rem;
+  }
+  .hbar-track {
+    height: 20px;
+  }
+  /* Dash-grid: stay 2-column on phone for at-a-glance scan */
+  .dash-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 0.55rem !important;
+  }
+  .dash-card {
+    padding: 0.7rem 0.75rem !important;
+  }
+  .dash-num {
+    font-size: 1.6rem !important;
+  }
+  .dash-label {
+    font-size: 0.72rem !important;
+  }
+  .dash-trend, .dash-go {
+    font-size: 0.62rem !important;
+  }
+  /* Dash-row (Activity + Stock by Category): stack on phone */
+  .dash-row {
+    grid-template-columns: 1fr !important;
+    gap: 0.7rem !important;
+  }
+  .dash-half {
+    padding: 0.95rem 1rem !important;
+  }
+  /* Compact section headings on mobile */
+  .section-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+  }
+  .section-heading h2 {
+    font-size: 1rem;
+  }
+  .section-heading .btn {
+    align-self: stretch;
+  }
+  /* Tables: horizontally scroll on overflow */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Filter chips: smaller on mobile */
+  .filter-chip {
+    font-size: 0.72rem;
+    padding: 0.32rem 0.65rem;
+  }
+  /* Akash form: full-width inputs */
+  .field-row {
+    grid-template-columns: 1fr !important;
+    gap: 0.65rem !important;
+  }
+  /* Modal: take more vertical space, less padding */
+  .modal {
+    max-width: 95vw !important;
+    max-height: 92vh;
+    padding: 1.1rem 1rem !important;
+  }
+  .modal.modal-wide {
+    max-width: 95vw !important;
+  }
+  /* Admin nav pills: wrap and shrink */
+  .admin-nav {
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .nav-pill {
+    font-size: 0.75rem;
+    padding: 0.4rem 0.7rem;
+  }
+  /* Pending tile breakdown: 1 col on small phones */
+  .pending-breakdown {
+    grid-template-columns: 1fr !important;
+  }
+  /* Header: tighter */
+  .header h1 {
+    font-size: 1.15rem;
+  }
+}
+
+/* Very small phones */
+@media (max-width: 380px) {
+  .donut-wrap {
+    width: 70%;
+  }
+  .donut-legend {
+    grid-template-columns: 1fr;
+  }
+  .dash-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
