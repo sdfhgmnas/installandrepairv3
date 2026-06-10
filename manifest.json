@@ -1,0 +1,47 @@
+{
+  "name": "GPS Maintenance Tracker — TASR",
+  "short_name": "GPS Tracker",
+  "description": "Track GPS device installations, SIM cards, repairs, and stock inventory for the TASR fleet.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0891b2",
+  "background_color": "#f8fafc",
+  "lang": "en-IN",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "https://api.iconify.design/material-symbols/gps-fixed.svg?color=%23ffffff&width=192&height=192",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "https://api.iconify.design/material-symbols/gps-fixed.svg?color=%23ffffff&width=512&height=512",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New Installation",
+      "short_name": "Install",
+      "description": "Create a new GPS installation entry",
+      "url": "./?action=new-install",
+      "icons": [
+        { "src": "https://api.iconify.design/material-symbols/add-circle.svg?color=%230891b2&width=96&height=96", "sizes": "96x96", "type": "image/svg+xml" }
+      ]
+    },
+    {
+      "name": "Report Repair",
+      "short_name": "Repair",
+      "description": "Log a repair work entry",
+      "url": "./?action=new-repair",
+      "icons": [
+        { "src": "https://api.iconify.design/material-symbols/build.svg?color=%230891b2&width=96&height=96", "sizes": "96x96", "type": "image/svg+xml" }
+      ]
+    }
+  ]
+}
