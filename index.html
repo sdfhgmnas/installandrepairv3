@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no, maximum-scale=1.0" />
   <meta name="theme-color" content="#0891b2" />
+ 
+  <!-- PWA / iOS / Android home-screen install support -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="GPS Tracker" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="application-name" content="GPS Tracker" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="https://api.iconify.design/material-symbols/gps-fixed.svg?color=%230891b2&width=180&height=180" />
+ 
   <title>GPS Maintenance Tracker</title>
  
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -26,11 +36,32 @@
  
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <!-- Optional: uncomment to point at a different Supabase project -->
   <!-- <script src="config.js"></script> -->
   <script src="db.js"></script>
   <script src="app.js"></script>
+ 
+  <!-- Service worker registration for PWA / offline shell -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>
  
 
+
+
+
+
+
+
+
+
+
+
+We couldn’t connect to Claude. Please check your network connection and try again.
