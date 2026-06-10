@@ -3951,3 +3951,399 @@ tr.empty-row td {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* ============================================================
+   v2.5 — Native mobile-app feel: bottom tab bar, FAB, sheets
+   ============================================================ */
+
+/* Safe-area aware body padding on phones */
+@supports (padding: env(safe-area-inset-bottom)) {
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Disable iOS bounce / improve tap feel */
+html, body {
+  overscroll-behavior-y: contain;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ===== Bottom tab bar (mobile only) ===== */
+.bottom-tab-bar {
+  display: none;
+}
+
+@media (max-width: 880px) {
+  .bottom-tab-bar {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border-top: 1px solid var(--border);
+    padding: 0.35rem 0.2rem calc(0.35rem + env(safe-area-inset-bottom));
+    justify-content: space-around;
+    align-items: stretch;
+    gap: 0.1rem;
+    box-shadow: 0 -2px 12px rgba(15, 23, 42, 0.06);
+  }
+  /* Push content up so bottom bar doesn't overlap last items */
+  .app {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+  /* Hide the desktop nav pills + footer on mobile */
+  .admin-nav,
+  .admin-footer-nav {
+    display: none;
+  }
+}
+
+.bt-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  background: transparent;
+  border: none;
+  padding: 0.45rem 0.25rem 0.3rem;
+  border-radius: 10px;
+  font-family: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+  position: relative;
+  transition: color 0.15s, background 0.15s, transform 0.1s;
+  min-height: 50px;
+}
+
+.bt-tab:active {
+  transform: scale(0.94);
+  background: rgba(8, 145, 178, 0.08);
+}
+
+.bt-tab.active {
+  color: var(--primary);
+}
+
+.bt-tab.active .bt-icon {
+  transform: scale(1.12);
+}
+
+.bt-icon {
+  font-size: 1.35rem;
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+
+.bt-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.bt-badge {
+  position: absolute;
+  top: 3px;
+  right: 12px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: #ef4444;
+  color: white;
+  border-radius: 9px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.3);
+}
+
+/* ===== Floating Action Button (FAB) — Akash portal ===== */
+.fab-container {
+  position: fixed;
+  right: 1rem;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.6rem;
+  z-index: 40;
+}
+
+@media (max-width: 880px) {
+  .fab-container {
+    bottom: calc(82px + env(safe-area-inset-bottom));
+  }
+}
+
+.fab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
+  color: white;
+  box-shadow: 0 8px 20px rgba(8, 145, 178, 0.35), 0 2px 4px rgba(0, 0, 0, 0.08);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.fab:active {
+  transform: scale(0.92);
+  box-shadow: 0 4px 10px rgba(8, 145, 178, 0.4);
+}
+
+.fab-main {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+}
+
+.fab-main .fab-icon {
+  font-size: 2rem;
+  line-height: 1;
+  font-weight: 300;
+  margin-top: -2px;
+}
+
+.fab-mini {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #a855f7 0%, #c084fc 100%);
+  box-shadow: 0 6px 14px rgba(168, 85, 247, 0.3), 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.fab-mini .fab-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+/* ===== Bottom sheet modal (used by "More" tab) ===== */
+.modal.modal-sheet {
+  max-width: 100% !important;
+  width: 100%;
+  border-radius: 18px 18px 0 0 !important;
+  position: absolute !important;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  top: auto !important;
+  margin: 0 !important;
+  padding: 1.2rem 1.2rem calc(1.4rem + env(safe-area-inset-bottom)) !important;
+  animation: sheet-slide-up 0.28s ease;
+}
+
+@keyframes sheet-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@media (min-width: 881px) {
+  .modal.modal-sheet {
+    max-width: 480px !important;
+    margin: 0 auto !important;
+    border-radius: 18px !important;
+    position: relative !important;
+    bottom: auto;
+  }
+}
+
+.sheet-title {
+  font-size: 1.1rem;
+  margin: 0 0 1rem;
+  text-align: center;
+  position: relative;
+  color: var(--text);
+}
+
+.sheet-title::before {
+  content: "";
+  display: block;
+  width: 40px;
+  height: 4px;
+  background: #cbd5e1;
+  border-radius: 2px;
+  position: absolute;
+  top: -0.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+}
+
+.sheet-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 1rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+  transition: transform 0.1s, box-shadow 0.15s;
+}
+
+.sheet-item:active {
+  transform: scale(0.96);
+  background: var(--primary-ring);
+}
+
+.sheet-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.sheet-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.sheet-danger {
+  background: linear-gradient(135deg, #fef2f2, #fee2e2);
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* ===== Improved touch states on tappable items ===== */
+@media (hover: none) and (pointer: coarse) {
+  .btn:active,
+  .nav-pill:active,
+  .filter-chip:active,
+  .pending-tile:active,
+  .stat-chip:active,
+  .dash-card:active {
+    transform: scale(0.97);
+    transition: transform 0.08s;
+  }
+  /* Bigger tap targets for icon-only buttons */
+  .icon-btn,
+  .row-actions .btn-sm {
+    min-height: 38px;
+    min-width: 38px;
+  }
+}
+
+/* iOS-style smooth scrolling */
+.table-wrap,
+.tl-modal-body,
+.activity-feed {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* PWA standalone-mode tweaks (when installed to home screen) */
+@media (display-mode: standalone) {
+  /* Hide any "install this app" affordances we may add later */
+  .pwa-install-prompt {
+    display: none !important;
+  }
+  /* Add top safe-area inset for notch phones */
+  .header {
+    padding-top: calc(0.75rem + env(safe-area-inset-top));
+  }
+}
+
+/* Mobile-specific: better forms */
+@media (max-width: 640px) {
+  input, select, textarea {
+    font-size: 16px !important; /* prevent iOS zoom on focus */
+  }
+  .btn {
+    min-height: 42px;
+  }
+  .btn-sm {
+    min-height: 34px;
+  }
+}
+
+/* ============================================================
+   v2.6 — Camera barcode scanner + Excel exports
+   ============================================================ */
+
+/* Input field with attached scan button */
+.input-with-scan {
+  display: flex;
+  gap: 0.4rem;
+  align-items: stretch;
+}
+
+.input-with-scan input {
+  flex: 1;
+  min-width: 0;
+}
+
+.scan-btn {
+  flex: 0 0 auto;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1.15rem;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 2px 4px rgba(8, 145, 178, 0.18);
+  transition: transform 0.12s, box-shadow 0.15s;
+}
+
+.scan-btn:hover {
+  box-shadow: 0 4px 8px rgba(8, 145, 178, 0.3);
+}
+
+.scan-btn:active {
+  transform: scale(0.93);
+}
+
+/* QR / barcode reader modal */
+.qr-reader-wrap {
+  width: 100%;
+  max-width: 480px;
+  margin: 0.5rem auto;
+  background: #0f172a;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  aspect-ratio: 4/3;
+}
+
+.qr-reader-wrap video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+}
+
+.qr-reader-wrap > div {
+  /* html5-qrcode injects controls — slim them down */
+  background: transparent !important;
+}
+
+#qrStatus {
+  text-align: center;
+  margin-top: 0.7rem;
+}
