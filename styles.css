@@ -4347,3 +4347,794 @@ html, body {
   text-align: center;
   margin-top: 0.7rem;
 }
+
+/* ============================================================
+   v2.6.1 — Scanner manual-entry fallback
+   ============================================================ */
+
+.manual-entry-block {
+  margin: 0.85rem 0 0;
+  padding: 0.8rem 0.9rem;
+  background: var(--surface-2);
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+}
+
+.manual-entry-block label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.manual-entry-block.hidden {
+  display: none;
+}
+
+/* ============================================================
+   v2.6.2 — Tame Html5QrcodeScanner injected UI
+   ============================================================ */
+
+/* The library injects its own buttons, selects, and headers into
+   #qrReader. Make them readable and fit the app theme. */
+
+#qrReader {
+  min-height: 200px;
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+#qrReader__dashboard,
+#qrReader__dashboard_section,
+#qrReader__dashboard_section_csr,
+#qrReader__dashboard_section_swaplink {
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
+  padding: 0.5rem 0.6rem !important;
+  font-family: inherit !important;
+  font-size: 0.84rem !important;
+}
+
+#qrReader button {
+  background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%) !important;
+  color: white !important;
+  border: none !important;
+  padding: 0.5rem 0.85rem !important;
+  border-radius: 8px !important;
+  font-family: inherit !important;
+  font-size: 0.82rem !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  margin: 0.2rem 0.25rem !important;
+  box-shadow: 0 2px 4px rgba(8, 145, 178, 0.2);
+}
+
+#qrReader button:hover {
+  filter: brightness(1.05);
+}
+
+#qrReader select {
+  font-family: inherit;
+  font-size: 0.84rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: white;
+  color: var(--text);
+  margin: 0.2rem 0.25rem;
+}
+
+#qrReader__dashboard_section_swaplink {
+  color: #0891b2 !important;
+  font-weight: 700 !important;
+  text-decoration: none !important;
+  cursor: pointer;
+}
+
+#qrReader__header_message {
+  font-size: 0.78rem;
+  padding: 0.4rem 0.6rem;
+}
+
+/* Hide library's stop / state messages we don't need */
+#qrReader__filescan_input {
+  font-family: inherit;
+  font-size: 0.82rem;
+}
+
+/* The video / canvas the library draws — make it responsive */
+#qrReader video,
+#qrReader__scan_region {
+  width: 100% !important;
+  max-width: 100% !important;
+  background: #0f172a;
+}
+
+#qrReader img {
+  /* Hide the default "Camera" icon if it looks broken */
+  max-height: 32px;
+  filter: invert(70%);
+}
+
+/* ============================================================
+   v2.7 — Mobile-first polish: typography, spacing, sticky header,
+   touch-friendly inputs, cleaner login. Inspired by Rishabh app.
+   ============================================================ */
+
+/* ----- Better base typography on mobile ----- */
+@media (max-width: 880px) {
+  body, .app {
+    font-size: 14.5px;
+  }
+  h1 { font-size: 1.25rem; }
+  h2 { font-size: 1.05rem; }
+  h3 { font-size: 0.95rem; }
+  p, label, span, td, th { line-height: 1.45; }
+}
+
+/* ----- Sticky compact header on mobile ----- */
+@media (max-width: 880px) {
+  .header {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: calc(0.7rem + env(safe-area-inset-top)) 0.9rem 0.65rem;
+    margin: 0 -0.9rem 0.9rem;
+    border-radius: 0;
+  }
+  .header h1 {
+    font-size: 1.1rem;
+    margin: 0 0 0.1rem;
+    line-height: 1.2;
+  }
+  .header .header-subtitle,
+  .header p {
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    margin: 0;
+  }
+  /* Hide refresh / sync indicators on smallest screens */
+  .sync-indicator {
+    font-size: 0.66rem;
+    padding: 0.18rem 0.4rem;
+  }
+}
+
+/* ----- Main container padding on mobile ----- */
+@media (max-width: 880px) {
+  .main {
+    padding: 0.5rem 0 0;
+  }
+  .app {
+    padding-left: 0.85rem;
+    padding-right: 0.85rem;
+  }
+  /* Cards more breathing room internally, less margin externally */
+  .card {
+    padding: 0.95rem 0.95rem 1rem;
+    margin-bottom: 0.85rem;
+    border-radius: 14px;
+  }
+  /* Section heading: tighter title, smaller subtitle */
+  .section-heading h2 {
+    font-size: 1rem;
+    line-height: 1.25;
+  }
+  .section-subtitle {
+    font-size: 0.74rem;
+    margin-top: 0.15rem;
+  }
+}
+
+/* ----- Form fields: bigger touch targets, no zoom on iOS ----- */
+@media (max-width: 880px) {
+  .field {
+    margin-bottom: 0.75rem;
+  }
+  .field label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-bottom: 0.3rem;
+    display: block;
+    color: var(--text);
+    letter-spacing: 0.01em;
+  }
+  .field input,
+  .field select,
+  .field textarea,
+  input[type="text"],
+  input[type="search"],
+  input[type="number"],
+  input[type="password"],
+  input[type="email"],
+  input[type="tel"],
+  select,
+  textarea {
+    font-size: 16px !important;        /* prevent iOS zoom */
+    padding: 0.7rem 0.85rem !important;
+    border-radius: 10px !important;
+    min-height: 46px;
+  }
+  .field .hint {
+    font-size: 0.72rem;
+    margin-top: 0.35rem;
+    line-height: 1.35;
+  }
+  /* Form grids: single column on mobile */
+  .form-grid,
+  .field-row {
+    grid-template-columns: 1fr !important;
+    gap: 0 !important;
+  }
+}
+
+/* ----- Buttons: proper touch targets ----- */
+@media (max-width: 880px) {
+  .btn {
+    min-height: 44px;
+    padding: 0.65rem 1.05rem;
+    font-size: 0.9rem;
+    border-radius: 10px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .btn-sm {
+    min-height: 36px;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.78rem;
+  }
+  /* Stacked button row in modals/cards */
+  .modal-actions {
+    flex-direction: column-reverse;
+    gap: 0.55rem;
+  }
+  .modal-actions .btn {
+    width: 100%;
+  }
+  /* Bulk actions: wrap to multiple rows if needed */
+  .bulk-actions {
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+  .bulk-actions .btn {
+    flex: 1 1 calc(50% - 0.3rem);
+    min-width: 0;
+    font-size: 0.74rem;
+    padding: 0.55rem 0.65rem;
+  }
+}
+
+/* ----- Tables on mobile: tap-friendly rows, smaller padding ----- */
+@media (max-width: 880px) {
+  .table-wrap table {
+    font-size: 0.82rem;
+  }
+  .table-wrap th,
+  .table-wrap td {
+    padding: 0.65rem 0.5rem;
+  }
+  .table-wrap th {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .row-actions {
+    display: flex;
+    flex-direction: row;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+  .row-actions .btn {
+    flex: 1 1 auto;
+    min-width: auto;
+    padding: 0.4rem 0.65rem;
+    font-size: 0.74rem;
+    min-height: 32px;
+  }
+}
+
+/* ----- Login screen polish (centered, clean, big buttons) ----- */
+.login-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: linear-gradient(135deg, #f0f9ff 0%, #ecfeff 50%, #f5f3ff 100%);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: white;
+  border-radius: 20px;
+  padding: 2rem 1.5rem 1.75rem;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.04);
+  text-align: center;
+}
+
+.login-logo {
+  width: 76px;
+  height: 76px;
+  margin: 0 auto 1.1rem;
+  background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.2rem;
+  box-shadow: 0 8px 20px rgba(8, 145, 178, 0.32);
+}
+
+.login-card h1 {
+  margin: 0 0 0.3rem;
+  font-size: 1.4rem;
+  color: var(--text);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.login-card .login-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0 0 1.5rem;
+}
+
+.login-card .field {
+  text-align: left;
+  margin-bottom: 0.85rem;
+}
+
+.login-card .btn-primary {
+  width: 100%;
+  margin-top: 0.4rem;
+  min-height: 48px;
+  font-size: 0.95rem;
+}
+
+.login-footer {
+  margin-top: 1.2rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+/* ----- Summary boxes (Akash stat strip): tighter on mobile ----- */
+@media (max-width: 880px) {
+  .summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.55rem;
+  }
+  .summary-box {
+    padding: 0.75rem 0.7rem !important;
+  }
+  .summary-box strong {
+    font-size: 1.5rem;
+  }
+  .summary-box span {
+    font-size: 0.72rem;
+  }
+}
+
+/* ----- Toast positioning fix on mobile (above bottom bar / FAB) ----- */
+@media (max-width: 880px) {
+  .toast {
+    bottom: auto !important;
+    top: calc(env(safe-area-inset-top) + 70px) !important;
+    left: 1rem !important;
+    right: 1rem !important;
+    max-width: none !important;
+    text-align: center;
+  }
+}
+
+/* ----- FAB position fine-tune on smaller phones ----- */
+@media (max-width: 380px) {
+  .fab-main {
+    width: 56px;
+    height: 56px;
+  }
+  .fab-main .fab-icon {
+    font-size: 1.75rem;
+  }
+  .fab-mini {
+    width: 42px;
+    height: 42px;
+  }
+}
+
+/* ----- Bottom tab bar: slightly larger on tablets ----- */
+@media (min-width: 480px) and (max-width: 880px) {
+  .bt-label {
+    font-size: 0.72rem;
+  }
+  .bt-icon {
+    font-size: 1.45rem;
+  }
+}
+
+/* ----- Donut chart cards: tighter heading on phone ----- */
+@media (max-width: 640px) {
+  .donut-card {
+    padding: 0.9rem 0.95rem 1rem;
+  }
+  .donut-card .section-heading h2 {
+    font-size: 0.92rem;
+  }
+  .donut-card .section-subtitle {
+    font-size: 0.7rem;
+  }
+}
+
+/* ----- Pending tiles: tighter on phone ----- */
+@media (max-width: 880px) {
+  .pending-tile {
+    padding: 0.65rem 0.75rem;
+  }
+  .pt-icon {
+    font-size: 1.15rem;
+  }
+  .pt-num {
+    font-size: 1.45rem;
+    margin: 0.1rem 0 0.05rem;
+  }
+  .pt-label {
+    font-size: 0.74rem;
+  }
+  .pt-sub {
+    font-size: 0.62rem;
+  }
+}
+
+/* ----- Activity feed: tighter rows on mobile ----- */
+@media (max-width: 640px) {
+  .activity-feed li {
+    padding: 0.55rem 0.4rem;
+    font-size: 0.78rem;
+  }
+}
+
+/* ----- Stock per-name strip: smaller chips on phone ----- */
+@media (max-width: 640px) {
+  .name-stat-strip {
+    padding: 0.45rem 0.5rem;
+    gap: 0.35rem;
+  }
+  .stat-chip {
+    min-width: 72px;
+    padding: 0.35rem 0.55rem 0.4rem;
+  }
+  .stat-chip-num {
+    font-size: 0.95rem;
+  }
+  .stat-chip-name {
+    font-size: 0.72rem;
+  }
+}
+
+/* ----- Cleaner sync indicator on mobile (sticky header) ----- */
+@media (max-width: 880px) {
+  .sync-indicator-wrap {
+    margin-top: 0.3rem;
+  }
+}
+
+/* ----- Better disabled state on mobile (clear visual cue) ----- */
+.btn:disabled,
+.btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ----- Pull-to-refresh visual hint (just spacing, behaviour native) ----- */
+@media (max-width: 880px) {
+  .app {
+    overscroll-behavior-y: contain;
+  }
+}
+
+/* ----- Modal: cleaner on mobile (sheet-like at the bottom) ----- */
+@media (max-width: 640px) {
+  .modal {
+    padding: 1.2rem 1rem 1.1rem;
+    border-radius: 16px !important;
+  }
+  .modal h3 {
+    font-size: 1.05rem;
+    margin: 0 0 0.5rem;
+  }
+  .modal-desc {
+    font-size: 0.8rem;
+    margin: 0 0 0.85rem;
+  }
+}
+
+/* ============================================================
+   v2.8 — Trakzee-style visual refresh:
+   • Light gray app background (cards visually float)
+   • White cards with colored LEFT BORDER accent
+   • Cleaner section headings (smaller, no subtitle clutter)
+   • Cleaner horizontal bars (Trakzee purple/violet shades)
+   • Better empty states ("No Record Found" style)
+   ============================================================ */
+
+/* Light gray app background (Trakzee look) */
+body {
+  background: #f5f6f8;
+}
+
+/* Cards: pure white with subtle border + LEFT accent stripe */
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-left: 4px solid var(--card-accent, #3b82f6);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  position: relative;
+}
+
+/* Per-card accent colors (Trakzee-style) — applied via .accent-X class */
+.card.accent-blue   { --card-accent: #3b82f6; }
+.card.accent-purple { --card-accent: #a855f7; }
+.card.accent-violet { --card-accent: #8b5cf6; }
+.card.accent-green  { --card-accent: #10b981; }
+.card.accent-orange { --card-accent: #f97316; }
+.card.accent-brown  { --card-accent: #92400e; }
+.card.accent-red    { --card-accent: #ef4444; }
+.card.accent-cyan   { --card-accent: #0891b2; }
+.card.accent-amber  { --card-accent: #f59e0b; }
+.card.accent-pink   { --card-accent: #ec4899; }
+.card.accent-slate  { --card-accent: #64748b; }
+.card.accent-teal   { --card-accent: #14b8a6; }
+
+/* Cleaner section heading inside cards */
+.card .section-heading {
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 0.55rem;
+  margin-bottom: 0.7rem;
+}
+
+.card .section-heading h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.card .section-heading .section-subtitle {
+  display: none; /* Trakzee-style: no subtitle clutter inside cards */
+}
+
+/* But keep subtitle visible on the page header (renderHeader) */
+.header .section-subtitle,
+.header p {
+  display: block;
+}
+
+/* "No Record Found" empty state — minimal Trakzee style */
+.empty-record {
+  text-align: center;
+  padding: 2.5rem 1rem;
+  color: #9ca3af;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+/* Cleaner horizontal bar chart (Trakzee uses purple/violet shades) */
+.hbar-chart {
+  gap: 0.85rem;
+}
+
+.hbar-row {
+  grid-template-columns: 1fr;
+  gap: 0.3rem;
+}
+
+.hbar-label {
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: #6b7280;
+  text-align: left;
+  font-family: var(--font-mono);
+}
+
+.hbar-track-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.hbar-track {
+  background: #f1f5f9;
+  height: 8px;
+  border-radius: 4px;
+}
+
+.hbar-fill {
+  border-radius: 4px;
+  height: 100%;
+}
+
+.hbar-value {
+  position: static;
+  transform: none;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+  text-shadow: none;
+  min-width: 24px;
+  text-align: right;
+}
+
+/* Donut card: tighter, cleaner (Trakzee style) */
+.donut-card {
+  padding: 1rem 1.1rem 1.1rem;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.donut-card .section-heading {
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+/* Pair-stat card (Trakzee Web vs Mobile / App Usage style) */
+.stat-pair-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-left: 4px solid var(--card-accent, #3b82f6);
+  border-radius: 12px;
+  padding: 0.95rem 1.1rem 1.1rem;
+}
+
+.stat-pair-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 0.55rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.stat-pair-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.stat-pair-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-left: 0.7rem;
+  border-left: 3px solid var(--pair-color, #3b82f6);
+}
+
+.stat-pair-label {
+  font-size: 0.72rem;
+  color: #9ca3af;
+  font-weight: 500;
+}
+
+.stat-pair-num {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #0f172a;
+  font-family: var(--font-mono);
+  letter-spacing: -0.02em;
+}
+
+.stat-pair-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right, var(--pair-color, #3b82f6) 0%, var(--pair-color, #3b82f6) var(--pair-pct, 100%), #f1f5f9 var(--pair-pct, 100%), #f1f5f9 100%);
+}
+
+/* Trakzee-style donut center caption: smaller, gray uppercase */
+.donut-svg text {
+  font-family: Manrope, sans-serif !important;
+}
+
+/* Tighter dash-grid (existing stat cards) on Trakzee theme */
+.dash-grid {
+  gap: 0.7rem;
+}
+
+.dash-card {
+  border-left: 4px solid var(--card-accent, #3b82f6);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  background: white;
+  border-radius: 12px;
+}
+
+/* Bottom tab bar: cleaner, all-blue active style (Trakzee) */
+.bt-tab.active {
+  color: #3b82f6;
+}
+
+.bt-tab.active .bt-icon {
+  filter: hue-rotate(195deg) saturate(1.3);
+}
+
+/* On mobile, remove the gradient from header (cleaner like Trakzee) */
+@media (max-width: 880px) {
+  .header {
+    background: white;
+    border-bottom: 1px solid #e5e7eb;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02);
+  }
+  .header h1 {
+    color: #0f172a;
+  }
+}
+
+/* Devices Out for Repair list (Trakzee-style faulty devices) */
+.devices-out-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.devices-out-list li {
+  padding: 0.7rem 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.devices-out-list li:last-child {
+  border-bottom: none;
+}
+
+.dol-main {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.2rem;
+}
+
+.dol-main strong {
+  font-size: 0.92rem;
+  color: #0f172a;
+  font-family: var(--font-mono);
+}
+
+.dol-type {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.12rem 0.5rem;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dol-meta {
+  font-size: 0.74rem;
+  color: #6b7280;
+  font-family: var(--font-mono);
+}
+
+/* Cleaner activity-feed rows on Trakzee theme */
+.activity-feed {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.activity-feed li {
+  padding: 0.65rem 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.activity-feed li:last-child {
+  border-bottom: none;
+}
