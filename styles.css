@@ -5289,3 +5289,100 @@ body {
 .scan-divider span {
   padding: 0 0.85rem;
 }
+
+/* ============================================================
+   v2.8.3 — Scanner UI: clean viewfinder + flip + status overlay
+   ============================================================ */
+
+/* Container for the camera viewfinder */
+.qr-reader-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  margin: 0.5rem auto;
+  aspect-ratio: 4/3;
+  background: #0f172a;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+}
+
+#qrReader {
+  width: 100% !important;
+  height: 100% !important;
+  background: #0f172a;
+  border: none !important;
+  padding: 0 !important;
+}
+
+/* The library injects a <video> and overlay canvas — make them fill */
+#qrReader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+  border-radius: 12px;
+}
+
+#qrReader > div,
+#qrReader canvas {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Hide the library's own header/dashboard since we provide our own UI */
+#qrReader__dashboard_section_csr,
+#qrReader__dashboard_section_swaplink,
+#qrReader__header_message,
+#qrReader__dashboard {
+  display: none !important;
+}
+
+/* Camera flip button overlay */
+.qr-flip-btn {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.7rem;
+  z-index: 10;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.7);
+  color: white;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s, background 0.15s;
+}
+
+.qr-flip-btn:hover {
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.qr-flip-btn:active {
+  transform: scale(0.92) rotate(180deg);
+}
+
+/* Status overlay at bottom of viewfinder */
+.qr-status {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, rgba(15, 23, 42, 0.85), transparent);
+  color: white;
+  padding: 0.6rem 0.85rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+  z-index: 5;
+  pointer-events: none;
+}
