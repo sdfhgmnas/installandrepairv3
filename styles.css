@@ -5138,3 +5138,154 @@ body {
 .activity-feed li:last-child {
   border-bottom: none;
 }
+
+/* ============================================================
+   v2.8.1 — Sticky top nav on mobile + tighter donut cards
+   ============================================================ */
+
+/* Show top admin-nav on mobile too (sticky horizontal scroll strip) */
+@media (max-width: 880px) {
+  .admin-nav {
+    display: flex !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+    padding: 0.55rem 0.85rem;
+    margin: 0 -0.85rem 0.7rem;
+    background: white;
+    border-bottom: 1px solid #e5e7eb;
+    position: sticky;
+    top: calc(env(safe-area-inset-top) + 56px); /* below the header */
+    z-index: 25;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .admin-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .admin-nav .nav-pill {
+    flex: 0 0 auto;
+    font-size: 0.74rem;
+    padding: 0.4rem 0.75rem;
+    white-space: nowrap;
+    border-radius: 18px;
+  }
+  /* Hide the footer audit links on mobile — accessible via "⋯ More" bottom sheet */
+  .admin-footer-nav {
+    display: none !important;
+  }
+}
+
+/* Tighter donut cards — Trakzee feel (less empty whitespace) */
+.donut-card {
+  padding: 0.85rem 1rem 0.9rem;
+}
+
+.donut-card-body {
+  padding: 0.3rem 0 0;
+  gap: 0.85rem;
+}
+
+.donut-wrap {
+  max-width: 150px;
+  width: 46%;
+}
+
+@media (max-width: 640px) {
+  .donut-card {
+    padding: 0.8rem 0.9rem 0.85rem;
+  }
+  .donut-card-body {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.7rem;
+  }
+  .donut-wrap {
+    width: 42%;
+    max-width: 140px;
+  }
+  .donut-legend {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+  }
+  .donut-legend-num {
+    font-size: 1rem;
+  }
+  .donut-legend-label {
+    font-size: 0.7rem;
+  }
+}
+
+/* GPS Type segmented control */
+.seg-control {
+  display: flex;
+  gap: 0.35rem;
+  background: #f1f5f9;
+  padding: 0.3rem;
+  border-radius: 12px;
+  margin-bottom: 0.35rem;
+}
+
+.seg-btn {
+  flex: 1;
+  padding: 0.55rem 0.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.1s, box-shadow 0.15s;
+  min-height: 42px;
+}
+
+.seg-btn:hover {
+  color: #0f172a;
+}
+
+.seg-btn.active {
+  background: white;
+  color: #0891b2;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  font-weight: 700;
+}
+
+.seg-btn:active {
+  transform: scale(0.97);
+}
+
+/* Optional fields (MAC, Sensor) — fade when hidden */
+.field-mac[style*="display: none"],
+.field-sensor[style*="display: none"] {
+  display: none !important;
+}
+
+/* ============================================================
+   v2.8.2 — Scanner modal: divider between camera and manual entry
+   ============================================================ */
+
+.scan-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 0.85rem 0;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.scan-divider::before,
+.scan-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+
+.scan-divider span {
+  padding: 0 0.85rem;
+}
