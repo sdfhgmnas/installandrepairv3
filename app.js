@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "2.8.2";
+const APP_VERSION = "2.8.3";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -1465,22 +1465,26 @@ function horizontalBarChart(items, opts = {}) {
 let _activeScanner = null;
 
 async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Point camera at the barcode or QR code.", onScan }) {
-  // Library presence — Html5QrcodeScanner is the higher-level UI wrapper.
-  // If unavailable (CDN blocked / library failed to load), we still let the
-  // user type the number manually — never block the entire flow.
-  const ScannerCls = window.Html5QrcodeScanner;
-  const ScanTypeEnum = window.Html5QrcodeScanType;
-  const libraryReady = typeof ScannerCls !== "undefined";
+  // Use the low-level Html5Qrcode API directly so we can force the BACK
+  // camera (facingMode: "environment") instead of the front selfie cam.
+  const HQR = window.Html5Qrcode;
+  const libraryReady = typeof HQR !== "undefined";
   const cameraReady = libraryReady && window.isSecureContext;
+
+  let currentFacing = "environment"; // start with back camera
 
   const cameraSection = cameraReady
     ? `
-      <div id="qrReader" class="qr-reader-wrap"></div>
+      <div class="qr-reader-wrap">
+        <div id="qrReader"></div>
+        <button type="button" class="qr-flip-btn" id="qrFlipBtn" aria-label="Flip camera">🔄</button>
+        <div class="qr-status" id="qrStatus">Starting back camera…</div>
+      </div>
       <div class="scan-divider"><span>OR</span></div>
     `
     : `
       <div class="hint hint-warn" style="margin-bottom: 0.7rem;">
-        ${!libraryReady ? "📷 Camera scanner unavailable on this device — type the number manually below." : "Camera needs HTTPS — type manually."}
+        ${!libraryReady ? "📷 Camera scanner unavailable — type manually below." : "Camera needs HTTPS — type manually below."}
       </div>
     `;
 
@@ -1491,7 +1495,7 @@ async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Po
     <div class="manual-entry-block">
       <label for="manualScanInput">Type the number manually:</label>
       <div class="input-with-scan" style="margin-top: 0.4rem;">
-        <input type="text" id="manualScanInput" autocomplete="off" inputmode="numeric" placeholder="Paste or type the number" autofocus />
+        <input type="text" id="manualScanInput" autocomplete="off" inputmode="numeric" placeholder="Paste or type the number" />
         <button type="button" class="btn btn-primary btn-sm" id="manualScanOk">OK</button>
       </div>
     </div>
@@ -1502,9 +1506,15 @@ async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Po
   modal.classList.add("modal-wide");
   modalOverlay.classList.remove("hidden");
 
+  const setStatus = (text) => {
+    const s = document.getElementById("qrStatus");
+    if (s) s.textContent = text;
+  };
+
   const cleanup = async () => {
     try {
       if (_activeScanner) {
+        await _activeScanner.stop().catch(() => {});
         await _activeScanner.clear().catch(() => {});
       }
     } catch {}
@@ -1513,7 +1523,7 @@ async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Po
     closeModal();
   };
 
-  // Manual entry (always available — works even without camera)
+  // Manual entry — always available
   document.getElementById("manualScanOk")?.addEventListener("click", async () => {
     const val = document.getElementById("manualScanInput")?.value.trim();
     if (!val) return;
@@ -1530,42 +1540,77 @@ async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Po
   modal.querySelector('[data-act="cancel"]').onclick = cleanup;
   modalOverlay.onclick = (e) => { if (e.target === modalOverlay) cleanup(); };
 
-  // Auto-focus manual entry for instant typing
-  setTimeout(() => document.getElementById("manualScanInput")?.focus(), 100);
+  if (!cameraReady) {
+    setTimeout(() => document.getElementById("manualScanInput")?.focus(), 100);
+    return;
+  }
 
-  // Initialise the camera scanner only if the library is loaded.
-  if (!cameraReady) return;
+  // ----- Camera start logic with forced back-camera -----
+  const config = {
+    fps: 12,
+    qrbox: { width: 260, height: 150 },
+    aspectRatio: 1.5,
+    disableFlip: false,
+    rememberLastUsedCamera: false,
+  };
 
-  setTimeout(() => {
+  const startCamera = async (facing) => {
+    setStatus(`Starting ${facing === "environment" ? "back" : "front"} camera…`);
     try {
-      const cfg = {
-        fps: 12,
-        qrbox: { width: 260, height: 150 },
-        rememberLastUsedCamera: true,
-        showTorchButtonIfSupported: true,
-        showZoomSliderIfSupported: true,
-        defaultZoomValueIfSupported: 2,
-        aspectRatio: 1.7,
-      };
-      if (ScanTypeEnum && typeof ScanTypeEnum.SCAN_TYPE_CAMERA !== "undefined") {
-        cfg.supportedScanTypes = [
-          ScanTypeEnum.SCAN_TYPE_CAMERA,
-          ScanTypeEnum.SCAN_TYPE_FILE,
-        ];
+      if (_activeScanner) {
+        try { await _activeScanner.stop(); } catch {}
+        try { await _activeScanner.clear(); } catch {}
+        _activeScanner = null;
       }
-      _activeScanner = new ScannerCls("qrReader", cfg, false);
-      _activeScanner.render(
+      _activeScanner = new HQR("qrReader", { verbose: false });
+      await _activeScanner.start(
+        { facingMode: facing },
+        config,
         async (decodedText) => {
           await cleanup();
           try { onScan(String(decodedText).trim()); } catch {}
         },
         () => {} // per-frame decode misses
       );
+      currentFacing = facing;
+      setStatus(`📷 ${facing === "environment" ? "Back" : "Front"} camera — hold steady`);
     } catch (err) {
-      console.error("Scanner init failed:", err);
-      // Don't toast — the manual entry is right there for the user.
+      console.warn("Camera start failed for", facing, err);
+      // If back camera fails, try by enumerating + picking by label
+      if (facing === "environment") {
+        try {
+          const cams = await HQR.getCameras();
+          const back = cams.find((c) => /back|rear|environment|world|wide(?!.*front)/i.test(c.label || ""));
+          const fallbackId = back?.id || cams[cams.length - 1]?.id;
+          if (fallbackId) {
+            _activeScanner = new HQR("qrReader", { verbose: false });
+            await _activeScanner.start(
+              fallbackId,
+              config,
+              async (decodedText) => {
+                await cleanup();
+                try { onScan(String(decodedText).trim()); } catch {}
+              },
+              () => {}
+            );
+            setStatus(`📷 Camera — hold steady`);
+            return;
+          }
+        } catch (innerErr) {
+          console.error("Camera enumeration fallback failed:", innerErr);
+        }
+      }
+      setStatus("Camera unavailable — please type manually below.");
     }
-  }, 80);
+  };
+
+  // Defer slightly so the qrReader div is laid out before camera init
+  setTimeout(() => startCamera("environment"), 100);
+
+  document.getElementById("qrFlipBtn")?.addEventListener("click", () => {
+    const newFacing = currentFacing === "environment" ? "user" : "environment";
+    startCamera(newFacing);
+  });
 }
 
 /* ============================================================
