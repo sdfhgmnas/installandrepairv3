@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "2.8.0";
+const APP_VERSION = "2.8.2";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -1465,29 +1465,33 @@ function horizontalBarChart(items, opts = {}) {
 let _activeScanner = null;
 
 async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Point camera at the barcode or QR code.", onScan }) {
-  // Library presence check — Html5QrcodeScanner is the higher-level UI
-  // wrapper that handles permissions, camera selection and file fallback.
+  // Library presence — Html5QrcodeScanner is the higher-level UI wrapper.
+  // If unavailable (CDN blocked / library failed to load), we still let the
+  // user type the number manually — never block the entire flow.
   const ScannerCls = window.Html5QrcodeScanner;
   const ScanTypeEnum = window.Html5QrcodeScanType;
-  if (typeof ScannerCls === "undefined") {
-    showToast("Scanner library not loaded. Hard-refresh the page (Ctrl+Shift+R).", true);
-    return;
-  }
+  const libraryReady = typeof ScannerCls !== "undefined";
+  const cameraReady = libraryReady && window.isSecureContext;
 
-  // Secure context check (camera APIs require HTTPS, except localhost)
-  if (!window.isSecureContext) {
-    showToast("Camera needs HTTPS. Open the app via https:// URL.", true);
-    return;
-  }
+  const cameraSection = cameraReady
+    ? `
+      <div id="qrReader" class="qr-reader-wrap"></div>
+      <div class="scan-divider"><span>OR</span></div>
+    `
+    : `
+      <div class="hint hint-warn" style="margin-bottom: 0.7rem;">
+        ${!libraryReady ? "📷 Camera scanner unavailable on this device — type the number manually below." : "Camera needs HTTPS — type manually."}
+      </div>
+    `;
 
   modal.innerHTML = `
     <h3>${escapeHtml(title)}</h3>
     <p class="modal-desc">${escapeHtml(hint)}</p>
-    <div id="qrReader" class="qr-reader-wrap"></div>
+    ${cameraSection}
     <div class="manual-entry-block">
-      <label for="manualScanInput">Type it manually if scan fails:</label>
+      <label for="manualScanInput">Type the number manually:</label>
       <div class="input-with-scan" style="margin-top: 0.4rem;">
-        <input type="text" id="manualScanInput" autocomplete="off" inputmode="numeric" placeholder="Type the number from the label" />
+        <input type="text" id="manualScanInput" autocomplete="off" inputmode="numeric" placeholder="Paste or type the number" autofocus />
         <button type="button" class="btn btn-primary btn-sm" id="manualScanOk">OK</button>
       </div>
     </div>
@@ -1509,7 +1513,7 @@ async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Po
     closeModal();
   };
 
-  // Manual entry (always visible — works even if camera fails completely)
+  // Manual entry (always available — works even without camera)
   document.getElementById("manualScanOk")?.addEventListener("click", async () => {
     const val = document.getElementById("manualScanInput")?.value.trim();
     if (!val) return;
@@ -1526,8 +1530,12 @@ async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Po
   modal.querySelector('[data-act="cancel"]').onclick = cleanup;
   modalOverlay.onclick = (e) => { if (e.target === modalOverlay) cleanup(); };
 
-  // Initialise the scanner — defer slightly to ensure the qrReader div is
-  // laid out (some browsers don't compute size for off-screen elements).
+  // Auto-focus manual entry for instant typing
+  setTimeout(() => document.getElementById("manualScanInput")?.focus(), 100);
+
+  // Initialise the camera scanner only if the library is loaded.
+  if (!cameraReady) return;
+
   setTimeout(() => {
     try {
       const cfg = {
@@ -1539,24 +1547,23 @@ async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Po
         defaultZoomValueIfSupported: 2,
         aspectRatio: 1.7,
       };
-      // Include file upload fallback if the enum is present.
       if (ScanTypeEnum && typeof ScanTypeEnum.SCAN_TYPE_CAMERA !== "undefined") {
         cfg.supportedScanTypes = [
           ScanTypeEnum.SCAN_TYPE_CAMERA,
           ScanTypeEnum.SCAN_TYPE_FILE,
         ];
       }
-      _activeScanner = new ScannerCls("qrReader", cfg, /* verbose */ false);
+      _activeScanner = new ScannerCls("qrReader", cfg, false);
       _activeScanner.render(
         async (decodedText) => {
           await cleanup();
           try { onScan(String(decodedText).trim()); } catch {}
         },
-        () => {} // ignore per-frame decode failures
+        () => {} // per-frame decode misses
       );
     } catch (err) {
       console.error("Scanner init failed:", err);
-      showToast(`Scanner failed: ${err?.message || err}. Type manually.`, true);
+      // Don't toast — the manual entry is right there for the user.
     }
   }, 80);
 }
@@ -2505,13 +2512,25 @@ async function deleteAkashMaintenance(recordId) {
 
 function renderInstallForm() {
   app.innerHTML = `
-    ${renderHeader("Installing New GPS", "All 6 fields are mandatory")}
+    ${renderHeader("Installing New GPS", "Fill the fields below to register a new install")}
     <main class="main">
-      <section class="card">
+      <section class="card accent-cyan">
         <div class="form-nav">
           <button type="button" class="btn btn-secondary btn-sm" id="backBtn">← Back</button>
         </div>
         <h2>New GPS Installation</h2>
+
+        <!-- GPS Type selector — Normal hides MAC + Sensor fields -->
+        <div class="field">
+          <label>GPS Type <span class="required">*</span></label>
+          <div class="seg-control" id="gpsTypeSeg">
+            <button type="button" class="seg-btn" data-type="Normal">📱 Normal</button>
+            <button type="button" class="seg-btn active" data-type="FMB">📡 FMB</button>
+            <button type="button" class="seg-btn" data-type="FMC">📡 FMC</button>
+          </div>
+          <p class="hint" id="gpsTypeHint">FMB / FMC devices need MAC ID and Sensor No. Normal devices don't.</p>
+        </div>
+
         <form id="installForm" class="form-grid">
           <div class="field">
             <label for="instImei">IMEI No <span class="required">*</span></label>
@@ -2526,7 +2545,7 @@ function renderInstallForm() {
           </div>
           <div class="field">
             <label for="instModel">GPS Model <span class="required">*</span></label>
-            <input type="text" id="instModel" required placeholder="e.g. GT06N" autocomplete="off" />
+            <input type="text" id="instModel" required placeholder="e.g. FMB920" autocomplete="off" />
           </div>
           <div class="field">
             <label for="instSim">SIM ICCID (20-digit, printed on the SIM card) <span class="required">*</span></label>
@@ -2536,11 +2555,11 @@ function renderInstallForm() {
             </div>
             <p class="hint" id="instSimHint">Wahi number daalo jo SIM card pe printed hai (long 20-digit number). Primary number admin ke SIM database se automatic link ho jaayega.</p>
           </div>
-          <div class="field">
+          <div class="field field-mac" id="fieldMac">
             <label for="instMac">MAC ID <span class="required">*</span></label>
             <input type="text" id="instMac" required placeholder="e.g. AA:BB:CC:DD:EE:FF" autocomplete="off" />
           </div>
-          <div class="field">
+          <div class="field field-sensor" id="fieldSensor">
             <label for="instSensor">Sensor No <span class="required">*</span></label>
             <input type="text" id="instSensor" required placeholder="e.g. SN-12345" autocomplete="off" />
           </div>
@@ -2554,9 +2573,52 @@ function renderInstallForm() {
 
   bindLogout();
   document.getElementById("backBtn")?.addEventListener("click", () => setView("akash-home"));
+
+  // GPS Type segmented control wiring — toggle MAC + Sensor visibility
+  let _gpsType = "FMB";
+  const seg = document.getElementById("gpsTypeSeg");
+  const fieldMac = document.getElementById("fieldMac");
+  const fieldSensor = document.getElementById("fieldSensor");
+  const macInput = document.getElementById("instMac");
+  const sensorInput = document.getElementById("instSensor");
+  const typeHint = document.getElementById("gpsTypeHint");
+  const modelInput = document.getElementById("instModel");
+
+  function applyGpsType(type) {
+    _gpsType = type;
+    // Update segmented control active state
+    seg?.querySelectorAll(".seg-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.type === type);
+    });
+    if (type === "Normal") {
+      fieldMac.style.display = "none";
+      fieldSensor.style.display = "none";
+      macInput.required = false;
+      sensorInput.required = false;
+      macInput.value = "";
+      sensorInput.value = "";
+      if (typeHint) typeHint.textContent = "Normal GPS — MAC ID aur Sensor No ki zaroorat nahi.";
+      if (modelInput.value === "" || /^FM[BC]/.test(modelInput.value)) {
+        modelInput.placeholder = "e.g. GT06N, TK103";
+      }
+    } else {
+      fieldMac.style.display = "";
+      fieldSensor.style.display = "";
+      macInput.required = true;
+      sensorInput.required = true;
+      if (typeHint) typeHint.textContent = `${type} GPS — MAC ID aur Sensor No bharna zaroori hai.`;
+      modelInput.placeholder = type === "FMB" ? "e.g. FMB920, FMB964" : "e.g. FMC650, FMC880";
+    }
+  }
+
+  seg?.querySelectorAll(".seg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => applyGpsType(btn.dataset.type));
+  });
+  applyGpsType("FMB"); // default
+
   document.getElementById("installForm")?.addEventListener("submit", (e) => {
     e.preventDefault();
-    handleInstallSubmit();
+    handleInstallSubmit(_gpsType);
   });
 
   // Barcode scan handlers — fill IMEI/SIM by scanning the device/card.
@@ -2610,15 +2672,19 @@ function renderInstallForm() {
   });
 }
 
-function handleInstallSubmit() {
+function handleInstallSubmit(gpsType = "FMB") {
+  const isNormal = gpsType === "Normal";
   const fields = {
     imei: document.getElementById("instImei"),
     vehicle: document.getElementById("instVehicle"),
     model: document.getElementById("instModel"),
     sim: document.getElementById("instSim"),
-    mac: document.getElementById("instMac"),
-    sensor: document.getElementById("instSensor"),
   };
+  // MAC + Sensor only required for FMB / FMC
+  if (!isNormal) {
+    fields.mac = document.getElementById("instMac");
+    fields.sensor = document.getElementById("instSensor");
+  }
 
   let valid = true;
   Object.values(fields).forEach((el) => {
@@ -2626,16 +2692,32 @@ function handleInstallSubmit() {
     if (!el.value.trim()) valid = false;
   });
   if (!valid) {
-    showToast("Please fill all 6 fields.", true);
+    showToast(`Please fill all ${Object.keys(fields).length} fields.`, true);
     return;
   }
 
   const data = Object.fromEntries(Object.entries(fields).map(([k, el]) => [k, el.value.trim()]));
+  if (isNormal) {
+    data.mac = "";
+    data.sensor = "";
+  }
+  data.gpsType = gpsType;
+
+  const macQuestion = isNormal
+    ? "" // Normal GPS — no MAC question
+    : `
+      <div class="confirm-q">
+        <span>MAC ID daal diya?</span>
+        <div class="yes-no-group">
+          <label class="yn-option"><input type="radio" name="macEntered" value="yes" /><span>Yes</span></label>
+          <label class="yn-option"><input type="radio" name="macEntered" value="no" /><span>No</span></label>
+        </div>
+      </div>`;
 
   showModal(
     `
     <h3>Confirm Before Submit</h3>
-    <p class="modal-desc">Both answers must be <strong>Yes</strong> to submit.</p>
+    <p class="modal-desc">${isNormal ? "Confirm vehicle is live before submitting." : "Both answers must be <strong>Yes</strong> to submit."}</p>
     <div class="confirm-questions">
       <div class="confirm-q">
         <span>Vehicle live hai?</span>
@@ -2644,13 +2726,7 @@ function handleInstallSubmit() {
           <label class="yn-option"><input type="radio" name="vehicleLive" value="no" /><span>No</span></label>
         </div>
       </div>
-      <div class="confirm-q">
-        <span>MAC ID daal diya?</span>
-        <div class="yes-no-group">
-          <label class="yn-option"><input type="radio" name="macEntered" value="yes" /><span>Yes</span></label>
-          <label class="yn-option"><input type="radio" name="macEntered" value="no" /><span>No</span></label>
-        </div>
-      </div>
+      ${macQuestion}
     </div>
     <div class="modal-actions">
       <button type="button" class="btn btn-secondary modal-close">Cancel</button>
@@ -2659,7 +2735,7 @@ function handleInstallSubmit() {
     `,
     async () => {
       const vehicleLive = modal.querySelector('input[name="vehicleLive"]:checked')?.value;
-      const macEntered = modal.querySelector('input[name="macEntered"]:checked')?.value;
+      const macEntered = isNormal ? "yes" : modal.querySelector('input[name="macEntered"]:checked')?.value;
 
       if (vehicleLive !== "yes" || macEntered !== "yes") {
         showToast("Both answers must be Yes to submit.", true);
