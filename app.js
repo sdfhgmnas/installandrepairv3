@@ -5,7 +5,7 @@ const toast = document.getElementById("toast");
 
 // App version — bump on every meaningful edit so deployed copies are
 // visibly identifiable.
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.8.0";
 
 const USERS = {
   akash: { password: "akash", role: "akash" },
@@ -1433,7 +1433,7 @@ function donutWithLegend({ segments, centerLabel, centerSub, size = 200 }) {
 // Horizontal bar chart. items = [{label, value, color?}].
 function horizontalBarChart(items, opts = {}) {
   const { showValue = true } = opts;
-  if (!items.length) return `<p class="muted" style="padding: 1rem 0;">No data.</p>`;
+  if (!items.length) return `<div class="empty-record">No Record Found</div>`;
   const max = Math.max(1, ...items.map((i) => Number(i.value || 0)));
   return `
     <div class="hbar-chart">
@@ -1444,9 +1444,11 @@ function horizontalBarChart(items, opts = {}) {
           return `
             <div class="hbar-row">
               <div class="hbar-label" title="${escapeHtml(it.label)}">${escapeHtml(it.label)}</div>
-              <div class="hbar-track">
-                <div class="hbar-fill" style="width: ${pct}%; background: ${it.color || "#14b8a6"};"></div>
-                ${showValue ? `<span class="hbar-value mono">${v}</span>` : ""}
+              <div class="hbar-track-row">
+                <div class="hbar-track">
+                  <div class="hbar-fill" style="width: ${pct}%; background: ${it.color || "#a78bfa"};"></div>
+                </div>
+                ${showValue ? `<span class="hbar-value">${v}</span>` : ""}
               </div>
             </div>`;
         })
@@ -1462,32 +1464,43 @@ function horizontalBarChart(items, opts = {}) {
 
 let _activeScanner = null;
 
-function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Point camera at the barcode or QR code.", onScan }) {
-  if (typeof Html5Qrcode === "undefined") {
-    showToast("Camera scanner library not loaded. Refresh and try again.", true);
+async function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Point camera at the barcode or QR code.", onScan }) {
+  // Library presence check — Html5QrcodeScanner is the higher-level UI
+  // wrapper that handles permissions, camera selection and file fallback.
+  const ScannerCls = window.Html5QrcodeScanner;
+  const ScanTypeEnum = window.Html5QrcodeScanType;
+  if (typeof ScannerCls === "undefined") {
+    showToast("Scanner library not loaded. Hard-refresh the page (Ctrl+Shift+R).", true);
     return;
   }
+
+  // Secure context check (camera APIs require HTTPS, except localhost)
+  if (!window.isSecureContext) {
+    showToast("Camera needs HTTPS. Open the app via https:// URL.", true);
+    return;
+  }
+
   modal.innerHTML = `
     <h3>${escapeHtml(title)}</h3>
     <p class="modal-desc">${escapeHtml(hint)}</p>
     <div id="qrReader" class="qr-reader-wrap"></div>
-    <p class="hint hint-info" id="qrStatus">Initialising camera…</p>
+    <div class="manual-entry-block">
+      <label for="manualScanInput">Type it manually if scan fails:</label>
+      <div class="input-with-scan" style="margin-top: 0.4rem;">
+        <input type="text" id="manualScanInput" autocomplete="off" inputmode="numeric" placeholder="Type the number from the label" />
+        <button type="button" class="btn btn-primary btn-sm" id="manualScanOk">OK</button>
+      </div>
+    </div>
     <div class="modal-actions">
-      <button type="button" class="btn btn-secondary btn-block" data-act="cancel">Cancel</button>
+      <button type="button" class="btn btn-secondary btn-block" data-act="cancel">Close</button>
     </div>
   `;
   modal.classList.add("modal-wide");
   modalOverlay.classList.remove("hidden");
 
-  const status = document.getElementById("qrStatus");
-  const setStatus = (text, cls = "hint hint-info") => {
-    if (status) { status.textContent = text; status.className = cls; }
-  };
-
   const cleanup = async () => {
     try {
       if (_activeScanner) {
-        await _activeScanner.stop().catch(() => {});
         await _activeScanner.clear().catch(() => {});
       }
     } catch {}
@@ -1496,29 +1509,56 @@ function openBarcodeScannerModal({ title = "📷 Scan Barcode", hint = "Point ca
     closeModal();
   };
 
-  try {
-    _activeScanner = new Html5Qrcode("qrReader", { verbose: false });
-    _activeScanner.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 260, height: 140 } },
-      async (decodedText) => {
-        setStatus(`✓ Scanned: ${decodedText}`, "hint hint-ok");
-        await cleanup();
-        try { onScan(String(decodedText).trim()); } catch {}
-      },
-      () => {} // ignore frequent miss-callbacks
-    ).then(() => {
-      setStatus("📷 Hold steady — looking for barcode…");
-    }).catch((err) => {
-      console.warn("Camera start failed:", err);
-      setStatus("Camera access denied or unavailable. Type manually.", "hint hint-warn");
-    });
-  } catch (err) {
-    setStatus("Scanner could not start. Type manually.", "hint hint-warn");
-  }
+  // Manual entry (always visible — works even if camera fails completely)
+  document.getElementById("manualScanOk")?.addEventListener("click", async () => {
+    const val = document.getElementById("manualScanInput")?.value.trim();
+    if (!val) return;
+    await cleanup();
+    try { onScan(val); } catch {}
+  });
+  document.getElementById("manualScanInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      document.getElementById("manualScanOk")?.click();
+    }
+  });
 
   modal.querySelector('[data-act="cancel"]').onclick = cleanup;
   modalOverlay.onclick = (e) => { if (e.target === modalOverlay) cleanup(); };
+
+  // Initialise the scanner — defer slightly to ensure the qrReader div is
+  // laid out (some browsers don't compute size for off-screen elements).
+  setTimeout(() => {
+    try {
+      const cfg = {
+        fps: 12,
+        qrbox: { width: 260, height: 150 },
+        rememberLastUsedCamera: true,
+        showTorchButtonIfSupported: true,
+        showZoomSliderIfSupported: true,
+        defaultZoomValueIfSupported: 2,
+        aspectRatio: 1.7,
+      };
+      // Include file upload fallback if the enum is present.
+      if (ScanTypeEnum && typeof ScanTypeEnum.SCAN_TYPE_CAMERA !== "undefined") {
+        cfg.supportedScanTypes = [
+          ScanTypeEnum.SCAN_TYPE_CAMERA,
+          ScanTypeEnum.SCAN_TYPE_FILE,
+        ];
+      }
+      _activeScanner = new ScannerCls("qrReader", cfg, /* verbose */ false);
+      _activeScanner.render(
+        async (decodedText) => {
+          await cleanup();
+          try { onScan(String(decodedText).trim()); } catch {}
+        },
+        () => {} // ignore per-frame decode failures
+      );
+    } catch (err) {
+      console.error("Scanner init failed:", err);
+      showToast(`Scanner failed: ${err?.message || err}. Type manually.`, true);
+    }
+  }, 80);
 }
 
 /* ============================================================
@@ -1923,12 +1963,12 @@ function bindLogout() {
 
 function renderLogin() {
   app.innerHTML = `
-    ${renderHeader("GPS Maintenance Tracker", "Login to continue")}
-    <main class="main centered">
-      <section class="card login-card">
-        <h2>Login</h2>
-        <p class="login-desc">Enter your username and password to continue.</p>
-        <form id="loginForm" class="login-form">
+    <div class="login-screen">
+      <div class="login-card">
+        <div class="login-logo">📍</div>
+        <h1>GPS Tracker</h1>
+        <p class="login-subtitle">TASR Fleet · Sign in to continue</p>
+        <form id="loginForm">
           <div class="field">
             <label for="loginUser">Username</label>
             <input type="text" id="loginUser" required placeholder="akash or admin" autocomplete="username" />
@@ -1937,10 +1977,11 @@ function renderLogin() {
             <label for="loginPass">Password</label>
             <input type="password" id="loginPass" required placeholder="Password" autocomplete="current-password" />
           </div>
-          <button type="submit" class="btn btn-primary login-submit">Login</button>
+          <button type="submit" class="btn btn-primary login-submit">Sign in</button>
         </form>
-      </section>
-    </main>
+        <p class="login-footer">v${APP_VERSION} · TASR BharatNext</p>
+      </div>
+    </div>
   `;
 
   document.getElementById("loginForm")?.addEventListener("submit", async (e) => {
@@ -2557,7 +2598,7 @@ function renderInstallForm() {
     }
     const sim = findSimBySecondary(v);
     if (sim && sim.primaryNumber) {
-      h.textContent = `✓ Found in SIM database — primary number: ${sim.primaryNumber}`;
+      h.textContent = `✓ SIM matched in database — ready to use.`;
       h.className = "hint hint-ok";
     } else if (sim && !sim.primaryNumber) {
       h.textContent = "⚠️ ICCID is in SIM database but primary not yet known — admin will fill it in Repair Progress.";
@@ -2625,14 +2666,41 @@ function handleInstallSubmit() {
         return false;
       }
 
+      // Refresh data first so we never block on stale state (e.g., a row
+      // that was deleted moments ago but still in local cache).
+      try { await refreshAllData(); } catch {}
+
       const allInstalls = loadInstallations();
-      if (allInstalls.some((i) => i.vehicleNo.toLowerCase() === data.vehicle.toLowerCase())) {
-        showToast("Vehicle already exists in installation database.", true);
-        return false;
+      const dupVehicle = allInstalls.find(
+        (i) => i.vehicleNo.toLowerCase() === data.vehicle.toLowerCase()
+      );
+      const dupImei = allInstalls.find((i) =>
+        i.imeiHistory.some((h) => h.value.toLowerCase() === data.imei.toLowerCase())
+      );
+
+      if (dupVehicle) {
+        const proceed = await showConfirm({
+          title: "Vehicle already has an install",
+          message: `<strong>${escapeHtml(dupVehicle.vehicleNo)}</strong> already has an active installation:<br><br>
+            • IMEI: <strong class="mono">${escapeHtml(getCurrentImei(dupVehicle) || "—")}</strong><br>
+            • Created: ${escapeHtml(formatDateTime(dupVehicle.createdAt))} by ${escapeHtml(dupVehicle.createdBy || "—")}<br><br>
+            Add another install for the same vehicle?`,
+          confirmLabel: "Yes, add anyway",
+          cancelLabel: "Cancel",
+          danger: true,
+        });
+        if (!proceed) return false;
       }
-      if (allInstalls.some((i) => i.imeiHistory.some((h) => h.value.toLowerCase() === data.imei.toLowerCase()))) {
-        showToast("IMEI already exists in installation database.", true);
-        return false;
+      if (dupImei && (!dupVehicle || dupImei.id !== dupVehicle.id)) {
+        const proceed = await showConfirm({
+          title: "IMEI already in use",
+          message: `IMEI <strong class="mono">${escapeHtml(data.imei)}</strong> is already in use on vehicle <strong>${escapeHtml(dupImei.vehicleNo)}</strong>.<br><br>
+            Same device on multiple vehicles can confuse stock + portal reconciliation. Sure?`,
+          confirmLabel: "Yes, add anyway",
+          cancelLabel: "Cancel",
+          danger: true,
+        });
+        if (!proceed) return false;
       }
 
       const now = new Date().toISOString();
@@ -2856,7 +2924,7 @@ function renderRepairForm() {
     }
     const sim = findSimBySecondary(v);
     if (sim && sim.primaryNumber) {
-      h.textContent = `✓ Found in SIM database — primary number: ${sim.primaryNumber}`;
+      h.textContent = `✓ SIM matched in database — ready to use.`;
       h.className = "hint hint-ok";
     } else if (sim && !sim.primaryNumber) {
       h.textContent = "⚠️ ICCID known to the SIM database but primary number is still pending. Admin will be asked to update it.";
@@ -4072,6 +4140,65 @@ function renderDashboard() {
       color: ["#0891b2", "#06b6d4", "#22d3ee", "#67e8f9", "#a5f3fc", "#cffafe"][i],
     }));
 
+  // 5) Devices currently out for service (Trakzee-style "Faulty Devices" card)
+  // A maintenance entry with deviceOutForRepair / sensorOutForRepair flag
+  // and NO subsequent install/repair on the same vehicle indicating return.
+  const devicesOut = [];
+  for (const m of allMaint) {
+    if (!m.deviceOutForRepair && !m.sensorOutForRepair) continue;
+    // Check if any later record on the same vehicle indicates a return
+    // (a new device install or sensor return). Simple heuristic: any later
+    // repair / install with newImei or new sensor.
+    const laterReturn = allMaint
+      .concat(allInstalls.map((i) => ({ vehicleNo: i.vehicleNo, createdAt: i.createdAt, newImei: getCurrentImei(i) })))
+      .find((r) =>
+        r.vehicleNo === m.vehicleNo &&
+        new Date(r.createdAt) > new Date(m.createdAt) &&
+        (r.newImei || r.deviceChange)
+      );
+    if (laterReturn) continue;
+    devicesOut.push({
+      vehicleNo: m.vehicleNo,
+      itemType: m.deviceOutForRepair ? "Device" : "Sensor",
+      identifier: m.deviceOutForRepair ? (m.oldImei || "—") : "—",
+      sentDate: m.createdAt,
+    });
+  }
+  devicesOut.sort((a, b) => new Date(b.sentDate) - new Date(a.sentDate));
+
+  // 6) Vehicles by repair age — when was the last repair done on each vehicle.
+  // Buckets: > 90 days, > 60, > 30, > 15, > 7 (and "active" = within last 7).
+  const now = Date.now();
+  const lastRepairByVehicle = {};
+  for (const m of allMaint) {
+    const t = new Date(m.createdAt).getTime();
+    if (!lastRepairByVehicle[m.vehicleNo] || t > lastRepairByVehicle[m.vehicleNo]) {
+      lastRepairByVehicle[m.vehicleNo] = t;
+    }
+  }
+  // For vehicles without any repair, use install date.
+  for (const inst of allInstalls) {
+    if (!(inst.vehicleNo in lastRepairByVehicle)) {
+      lastRepairByVehicle[inst.vehicleNo] = new Date(inst.createdAt).getTime();
+    }
+  }
+  const ageBuckets = { ">90": 0, ">60": 0, ">30": 0, ">15": 0, ">7": 0 };
+  for (const v of Object.values(lastRepairByVehicle)) {
+    const days = Math.floor((now - v) / (24 * 60 * 60 * 1000));
+    if (days > 90) ageBuckets[">90"] += 1;
+    else if (days > 60) ageBuckets[">60"] += 1;
+    else if (days > 30) ageBuckets[">30"] += 1;
+    else if (days > 15) ageBuckets[">15"] += 1;
+    else if (days > 7) ageBuckets[">7"] += 1;
+  }
+  const ageBars = [
+    { label: "> 90 days", value: ageBuckets[">90"], color: "#0ea5e9" },
+    { label: "> 60 days", value: ageBuckets[">60"], color: "#0ea5e9" },
+    { label: "> 30 days", value: ageBuckets[">30"], color: "#0ea5e9" },
+    { label: "> 15 days", value: ageBuckets[">15"], color: "#0ea5e9" },
+    { label: "> 7 days", value: ageBuckets[">7"], color: "#0ea5e9" },
+  ];
+
   // Recent activity feed (top 12 events across installs, repairs, deletions)
   const events = [
     ...allInstalls.map((i) => ({
@@ -4141,11 +4268,10 @@ function renderDashboard() {
 
       <!-- ROW 1: Big donut charts (Fleet / SIM / Repair Progress) -->
       <div class="donut-row">
-        <section class="card donut-card">
+        <section class="card donut-card accent-blue">
           <div class="section-heading">
             <div>
               <h2>🚛 Fleet by GPS Model</h2>
-              <p class="section-subtitle">${allInstalls.length} total installations</p>
             </div>
           </div>
           ${donutWithLegend({
@@ -4154,11 +4280,10 @@ function renderDashboard() {
             centerSub: "Installs",
           })}
         </section>
-        <section class="card donut-card">
+        <section class="card donut-card accent-purple">
           <div class="section-heading">
             <div>
               <h2>📶 SIM Status</h2>
-              <p class="section-subtitle">${allSims.length} SIMs in database</p>
             </div>
           </div>
           ${donutWithLegend({
@@ -4167,13 +4292,12 @@ function renderDashboard() {
             centerSub: "SIMs",
           })}
         </section>
-        <section class="card donut-card">
+        <section class="card donut-card accent-orange">
           <div class="section-heading">
             <div>
               <h2>⚙️ Repair Progress</h2>
-              <p class="section-subtitle">${pendingCount} pending tasks</p>
+              ${pendingCount ? `<button type="button" class="btn btn-warn btn-sm" data-go="pending">Resolve →</button>` : ""}
             </div>
-            ${pendingCount ? `<button type="button" class="btn btn-warn btn-sm" data-go="pending">Resolve →</button>` : ""}
           </div>
           ${donutWithLegend({
             segments: repairSegments,
@@ -4243,11 +4367,10 @@ function renderDashboard() {
 
       <!-- Two-column: Activity feed + Stock by category -->
       <div class="dash-row">
-        <section class="card dash-half">
+        <section class="card dash-half accent-blue">
           <div class="section-heading">
             <div>
               <h2>📋 Recent Activity</h2>
-              <p class="section-subtitle">Last 12 events across the fleet.</p>
             </div>
           </div>
           ${events.length ? `
@@ -4270,11 +4393,10 @@ function renderDashboard() {
           ` : `<p class="muted" style="padding: 1rem 0;">No activity yet.</p>`}
         </section>
 
-        <section class="card dash-half">
+        <section class="card dash-half accent-green">
           <div class="section-heading">
             <div>
               <h2>📦 Stock by Category</h2>
-              <p class="section-subtitle">Current quantity across categories.</p>
             </div>
           </div>
           ${catEntries.length ? `
@@ -4299,17 +4421,47 @@ function renderDashboard() {
         </section>
       </div>
 
+      <!-- ROW: Devices Out for Repair + Inactive Vehicles (Trakzee-style) -->
+      <div class="dash-row">
+        <section class="card accent-brown">
+          <div class="section-heading">
+            <div><h2>🔧 Devices Out for Repair</h2></div>
+          </div>
+          ${devicesOut.length ? `
+            <ul class="devices-out-list">
+              ${devicesOut.slice(0, 6).map((d) => `
+                <li>
+                  <div class="dol-main">
+                    <strong>${escapeHtml(d.vehicleNo)}</strong>
+                    <span class="dol-type">${escapeHtml(d.itemType)}</span>
+                  </div>
+                  <div class="dol-meta">
+                    ${d.identifier !== "—" ? `<span class="mono">${escapeHtml(d.identifier)}</span> · ` : ""}
+                    sent ${escapeHtml(formatDateTime(d.sentDate))}
+                  </div>
+                </li>
+              `).join("")}
+            </ul>
+          ` : `<div class="empty-record">No Record Found</div>`}
+        </section>
+        <section class="card accent-cyan">
+          <div class="section-heading">
+            <div><h2>⏱️ Vehicles by Last Activity</h2></div>
+          </div>
+          ${horizontalBarChart(ageBars)}
+        </section>
+      </div>
+
       <!-- BOTTOM ROW: Top vehicles by repair count -->
       ${topVehicles.length ? `
-        <section class="card">
+        <section class="card accent-purple">
           <div class="section-heading">
             <div>
               <h2>🚛 Top Vehicles by Repair Count</h2>
-              <p class="section-subtitle">Vehicles that have been to service the most.</p>
             </div>
-            <button type="button" class="btn btn-secondary btn-sm" data-go="repairs">View all repairs →</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-go="repairs">View all →</button>
           </div>
-          ${horizontalBarChart(topVehicles)}
+          ${horizontalBarChart(topVehicles.map((v) => ({ ...v, color: "#a78bfa" })))}
         </section>
       ` : ""}
     </main>
